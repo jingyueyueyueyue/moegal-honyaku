@@ -11,20 +11,18 @@ from app.services.ocr import ocr_recognize
 
 # ============ 可配置参数（通过环境变量调整）============
 OCR_MAX_CONCURRENCY = max(1, int(os.getenv("OCR_MAX_CONCURRENCY", "2")))
-# Inpaint 半径：越大修复范围越广（默认8，针对边缘残留问题）
-INPAINT_RADIUS = int(os.getenv("INPAINT_RADIUS", "8"))
-# 掩码膨胀迭代次数：越大覆盖越完整（默认3）
-MASK_DILATE_ITERATIONS = int(os.getenv("MASK_DILATE_ITERATIONS", "3"))
-# 掩码膨胀核大小（默认7）
-MASK_DILATE_KERNEL_SIZE = int(os.getenv("MASK_DILATE_KERNEL_SIZE", "7"))
-# 边界框扩展像素：确保完全覆盖文字边缘（默认5）
-BBOX_PADDING = int(os.getenv("BBOX_PADDING", "5"))
-# 全局掩码扩展（在整个图像上额外扩展掩码，单位像素）
-GLOBAL_MASK_EXPAND = int(os.getenv("GLOBAL_MASK_EXPAND", "4"))
+# Inpaint 半径（默认3，范围2-5）
+INPAINT_RADIUS = int(os.getenv("INPAINT_RADIUS", "3"))
+# 掩码膨胀迭代次数（默认1，范围1-3）
+MASK_DILATE_ITERATIONS = int(os.getenv("MASK_DILATE_ITERATIONS", "1"))
+# 掩码膨胀核大小（默认3，范围2-5）
+MASK_DILATE_KERNEL_SIZE = int(os.getenv("MASK_DILATE_KERNEL_SIZE", "3"))
+# 边界框扩展像素（默认2，范围0-5）
+BBOX_PADDING = int(os.getenv("BBOX_PADDING", "2"))
 # 是否使用增强版掩码算法
-USE_ENHANCED_MASK = os.getenv("USE_ENHANCED_MASK", "true").lower() in ("true", "1", "yes")
-# 是否进行二次inpaint（针对顽固残留）
-DOUBLE_INPAINT = os.getenv("DOUBLE_INPAINT", "true").lower() in ("true", "1", "yes")
+USE_ENHANCED_MASK = os.getenv("USE_ENHANCED_MASK", "false").lower() in ("true", "1", "yes")
+# 是否进行二次inpaint
+DOUBLE_INPAINT = os.getenv("DOUBLE_INPAINT", "false").lower() in ("true", "1", "yes")
 
 
 def _sanitize_bbox(bbox, width: int, height: int):
@@ -176,46 +174,14 @@ async def get_text_masked_pic(image_pil, image_cv, bboxes, inpaint=True):
         np.maximum(target, local_mask, out=target)
 
     if inpaint and np.any(mask):
-        # 全局掩码扩展：在整个图像层面再扩展一次
-        if GLOBAL_MASK_EXPAND > 0:
-            expand_kernel = np.ones((GLOBAL_MASK_EXPAND * 2 + 1, GLOBAL_MASK_EXPAND * 2 + 1), dtype=np.uint8)
-            mask = cv2.dilate(mask, expand_kernel, iterations=1)
-
         # 可选算法：TELEA（快）或 NS（质量更好）
-        inpaint_method = os.getenv("INPAINT_METHOD", "NS").upper()
+        inpaint_method = os.getenv("INPAINT_METHOD", "TELEA").upper()
         if inpaint_method == "NS":
             flags = cv2.INPAINT_NS
         else:
             flags = cv2.INPAINT_TELEA
 
         image_cv = cv2.inpaint(image_cv, mask, inpaintRadius=INPAINT_RADIUS, flags=flags)
-
-        # 二次inpaint：针对顽固残留
-        if DOUBLE_INPAINT:
-            # 检测是否还有残留文字边缘
-            gray = cv2.cvtColor(image_cv, cv2.COLOR_BGR2GRAY)
-            # 在原掩码区域边缘检测残留
-            mask_edge = cv2.dilate(mask, np.ones((3, 3), np.uint8), iterations=1)
-            mask_edge = mask_edge - mask
-            
-            if np.any(mask_edge):
-                # 在边缘区域检测残留
-                edge_region = cv2.bitwise_and(gray, gray, mask=mask_edge)
-                # 检测是否有残留的深色像素
-                residual_mask = cv2.inRange(edge_region, 0, 80)
-                residual_mask = cv2.dilate(residual_mask, np.ones((2, 2), np.uint8), iterations=1)
-                
-                if np.any(residual_mask):
-                    # 对残留区域进行二次修复
-                    image_cv = cv2.inpaint(image_cv, residual_mask, inpaintRadius=3, flags=flags)
-
-        # 后处理：轻微模糊修复区域边缘，使过渡更自然
-        if os.getenv("INPAINT_BLUR_EDGE", "true").lower() in ("true", "1", "yes"):
-            mask_dilated = cv2.dilate(mask, np.ones((7, 7), np.uint8), iterations=1)
-            mask_edge = mask_dilated - mask
-            if np.any(mask_edge):
-                blurred = cv2.GaussianBlur(image_cv, (5, 5), 0)
-                image_cv = np.where(mask_edge[:, :, np.newaxis] > 0, blurred, image_cv)
 
     return all_text, image_cv
 
