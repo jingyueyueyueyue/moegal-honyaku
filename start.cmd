@@ -40,8 +40,15 @@ cd /d "%ROOT_DIR%"
 
 set "TOOLS_DIR=%ROOT_DIR%.tools"
 set "UV_HOME=%TOOLS_DIR%\uv\"
-set "UV_BIN=%UV_HOME%uv.exe"
 set "VENV_PYTHON=%ROOT_DIR%.venv\Scripts\python.exe"
+
+REM 优先使用全局安装的 uv
+where uv >nul 2>&1
+if %errorlevel%==0 (
+    set "UV_BIN=uv"
+) else (
+    set "UV_BIN=%UV_HOME%uv.exe"
+)
 
 set "UV_CACHE_DIR=%ROOT_DIR%.cache\uv"
 set "UV_PYTHON_INSTALL_DIR=%ROOT_DIR%.python"
@@ -51,7 +58,7 @@ set "UV_PYTHON_INSTALL_BIN=0"
 
 if not defined UV_DEFAULT_INDEX set "UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple"
 
-if not exist "%UV_BIN%" (
+if not "%UV_BIN%"=="uv" if not exist "%UV_BIN%" (
     echo Downloading uv...
     if "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
         set "UV_ARCH=aarch64"

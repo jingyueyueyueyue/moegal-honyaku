@@ -41,8 +41,14 @@ cd "$ROOT_DIR"
 
 TOOLS_DIR="$ROOT_DIR/.tools"
 UV_HOME="$TOOLS_DIR/uv"
-UV_BIN="$UV_HOME/uv"
 VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
+
+# 优先使用全局安装的 uv，否则使用项目本地 uv
+if command -v uv &> /dev/null; then
+    UV_BIN="uv"
+else
+    UV_BIN="$UV_HOME/uv"
+fi
 
 export UV_CACHE_DIR="$ROOT_DIR/.cache/uv"
 export UV_PYTHON_INSTALL_DIR="$ROOT_DIR/.python"
@@ -54,7 +60,7 @@ if [ -z "$UV_DEFAULT_INDEX" ]; then
     export UV_DEFAULT_INDEX="https://pypi.tuna.tsinghua.edu.cn/simple"
 fi
 
-if [ ! -f "$UV_BIN" ]; then
+if [ "$UV_BIN" != "uv" ] && [ ! -f "$UV_BIN" ]; then
     echo "Downloading uv..."
     UV_ARCH=$(uname -m)
     if [ "$UV_ARCH" = "aarch64" ] || [ "$UV_ARCH" = "arm64" ]; then

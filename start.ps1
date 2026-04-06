@@ -42,8 +42,14 @@ Set-Location $ROOT_DIR
 
 $TOOLS_DIR = Join-Path $ROOT_DIR '.tools'
 $UV_HOME = Join-Path $TOOLS_DIR 'uv'
-$UV_BIN = Join-Path $UV_HOME 'uv.exe'
 $VENV_PYTHON = Join-Path $ROOT_DIR '.venv\Scripts\python.exe'
+
+# 优先使用全局安装的 uv
+if (Get-Command uv -ErrorAction SilentlyContinue) {
+    $UV_BIN = 'uv'
+} else {
+    $UV_BIN = Join-Path $UV_HOME 'uv.exe'
+}
 
 $env:UV_CACHE_DIR = Join-Path $ROOT_DIR '.cache\uv'
 $env:UV_PYTHON_INSTALL_DIR = Join-Path $ROOT_DIR '.python'
@@ -55,7 +61,7 @@ if (-not $env:UV_DEFAULT_INDEX) {
     $env:UV_DEFAULT_INDEX = 'https://pypi.tuna.tsinghua.edu.cn/simple'
 }
 
-if (-not (Test-Path $UV_BIN)) {
+if ($UV_BIN -ne 'uv' -and -not (Test-Path $UV_BIN)) {
     Write-Host 'Downloading uv...'
     $UV_ARCH = 'x86_64'
     if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { $UV_ARCH = 'aarch64' }
