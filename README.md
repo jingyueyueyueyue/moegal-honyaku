@@ -9,6 +9,55 @@
 ![example3](./assets/pics/example3.png)
 
 
+## 技术架构
+
+| 模块 | 技术/模型 |
+|------|----------|
+| 文字检测 | YOLO (comic-text-segmenter) |
+| OCR 引擎 | MangaOCR（日文优先）、PaddleOCR（多语言）、多模态 Vision（GPT-4V/Qwen-VL） |
+| 翻译 API | OpenAI 兼容接口、DashScope（通义千问） |
+| 图像修复 | OpenCV Inpaint（TELEA/NS 算法） |
+| 文本渲染 | PIL + LXGW WenKai 字体 |
+
+### 核心特性
+
+- **双翻译模式**：`parallel` 并发请求每句、`structured` 单次批量翻译
+- **多 OCR 引擎**：`local` 本地模型、`vision` 多模态 API
+- **GPU 自适应**：CUDA 不可用时自动回退 CPU
+- **运行时配置**：无需重启即可切换翻译商/OCR引擎/模式
+- **智能掩码**：多策略融合的文字区域掩码生成
+
+### local（本地模型）
+
+使用本地 MangaOCR + PaddleOCR 进行识别，适合：
+- 高配机器 + 批量处理
+- 离线环境 / 隐私敏感场景
+- 成本敏感 + 高频调用（无 API 费用）
+
+**注意**：本地模型约 500MB，需要 PyTorch/PaddlePaddle 依赖。
+
+### vision（多模态 OCR）
+
+使用 GPT-4V / Qwen-VL 等多模态模型进行 OCR，**对低配电脑友好**：
+
+| 传统本地 OCR | 多模态 Vision OCR |
+|-------------|------------------|
+| 需加载 ~500MB+ 模型到内存 | 无需本地模型，零显存占用 |
+| 依赖 PyTorch/CUDA 环境 | 仅需 HTTP 请求，CPU 即可运行 |
+| 冷启动加载模型需 5-15 秒 | 启动秒级响应 |
+| 低配机器 OCR 可能卡顿 2-5 秒/图 | 延迟取决于网络，通常 1-3 秒 |
+
+**优势**：
+
+1. **免模型部署** - 完全卸载到云端，本地零模型负担
+2. **更高识别准确率** - 对复杂排版、倾斜文字、模糊图片、手写体适应性更强
+3. **多语言原生支持** - 自动识别日/英/中/韩，无需切换引擎
+4. **简化依赖** - 仅依赖 OpenAI SDK，安装包体积大幅减小
+
+**适用场景**：
+- 低配机器 / 笔记本 / 云服务器
+- 追求识别准确率
+- 快速体验，不想下载模型
 
 ## 项目部署与使用
 
@@ -43,10 +92,17 @@ DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 DASHSCOPE_MODEL=qwen3-max
 ```
 
+# 多模态 OCR 配置（可选，使用 vision 模式时需要）
+VISION_OCR_PROVIDER=openai          # 或 dashscope
+VISION_OPENAI_API_KEY=your_key      # 或复用 OPENAI_API_KEY
+VISION_OCR_MODEL=gpt-4o-mini        # 或 gpt-4o
+```
+
 说明：
 - 默认配置为 `openai + parallel`。
 - 运行时可通过配置接口切换供应商与翻译模式（见下文）。
 - 为了保证首次启动稳定，OCR 默认使用 CPU。若需启用 GPU，可在 `.env` 添加 `MOEGAL_USE_GPU=1`（若驱动/显卡不兼容会自动回退 CPU）。
+- 使用 `vision` OCR 模式时，需配置 `VISION_OCR_PROVIDER` 及对应 API Key。
 
 ### 4. 启动服务
 
