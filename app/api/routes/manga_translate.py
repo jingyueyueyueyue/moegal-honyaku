@@ -89,12 +89,13 @@ async def _translate_image_bytes(
         translate_mode=custom_conf.translate_mode,
     )
     img_res = draw_text_on_boxes(inpaint, bboxes, cn_text)
-    ok, buffer = cv2.imencode(".png", img_res)
+    # 使用 JPEG 格式，质量 90%，大幅减小体积
+    ok, buffer = cv2.imencode(".jpg", img_res, [cv2.IMWRITE_JPEG_QUALITY, 90])
     if not ok:
         raise RuntimeError("结果图片编码失败")
 
     cn_file_bytes = buffer.tobytes()
-    file_name = f"{int(time.time() * 1000)}_{random.randint(1000, 9999)}.png"
+    file_name = f"{int(time.time() * 1000)}_{random.randint(1000, 9999)}.jpg"
     background_tasks.add_task(save_img, cn_file_bytes, "cn", file_name)
     background_tasks.add_task(save_img, file_bytes, "raw", file_name)
     b64_img = base64.b64encode(cn_file_bytes).decode("utf8") if include_res_img else None

@@ -4,7 +4,7 @@ import os
 import re
 
 TRANSLATE_WEB_MAX_BODY_BYTES = max(1, int(os.getenv("TRANSLATE_WEB_MAX_BODY_BYTES", "20971520")))
-SUPPORTED_IMAGE_MIME_TYPES = {"image/png"}
+SUPPORTED_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
 DATA_URL_PATTERN = re.compile(r"^data:(?P<mime>[^;,]+);base64,(?P<data>.+)$", re.IGNORECASE)
 
 
