@@ -27,6 +27,16 @@ DOWNLOAD_RETRY_COUNT = 2
 DOWNLOAD_TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
 
 
+def _now_ms():
+    """返回当前时间的毫秒时间戳"""
+    return time.time() * 1000
+
+
+def _elapsed_ms(start_ms: float) -> float:
+    """计算从 start_ms 到现在的耗时（毫秒）"""
+    return round(_now_ms() - start_ms, 2)
+
+
 def _decode_image(file_bytes: bytes):
     if not file_bytes:
         raise TranslateWebInputError(400, "图片为空")
@@ -70,36 +80,60 @@ async def _translate_image_bytes(
     from app.services.pic_process import draw_text_on_boxes, get_text_masked_pic, save_img
     from app.services.translate_api import translate_req
 
-    price = -0.0001
+    timings = {}  # 记录各阶段耗时
+    
+    # 图片解码
+    t0 = _now_ms()
     img_bgr_cv, img_pil = _decode_image(file_bytes)
+    timings["decode"] = _elapsed_ms(t0)
     
-    # 使用优化后的检测函数
+    # 文本检测
+    t1 = _now_ms()
     bboxes = detect_text_regions(img_bgr_cv)
+    timings["detect"] = _elapsed_ms(t1)
     
+    # 获取文本遮罩
+    t2 = _now_ms()
     all_text, inpaint = await get_text_masked_pic(
         img_pil, img_bgr_cv, bboxes, True, custom_conf.ocr_engine
     )
+    timings["mask_ocr"] = _elapsed_ms(t2)
+    
     if len(all_text) == 0:
         logger.warning("未检测出文字")
-        return None, None, None, None
+        return None, None, None, None, timings
 
+    # 翻译
+    t3 = _now_ms()
     cn_text, price = await translate_req(
         all_text,
         api_type=custom_conf.translate_api_type,
         translate_mode=custom_conf.translate_mode,
     )
+    timings["translate"] = _elapsed_ms(t3)
+
+    # 绘制文字
+    t4 = _now_ms()
     img_res = draw_text_on_boxes(inpaint, bboxes, cn_text)
-    # 使用 JPEG 格式，质量 90%，大幅减小体积
+    timings["draw"] = _elapsed_ms(t4)
+    
+    # 编码结果图片
+    t5 = _now_ms()
     ok, buffer = cv2.imencode(".jpg", img_res, [cv2.IMWRITE_JPEG_QUALITY, 90])
     if not ok:
         raise RuntimeError("结果图片编码失败")
+    timings["encode"] = _elapsed_ms(t5)
 
     cn_file_bytes = buffer.tobytes()
     file_name = f"{int(time.time() * 1000)}_{random.randint(1000, 9999)}.jpg"
-    background_tasks.add_task(save_img, cn_file_bytes, "cn", file_name)
-    background_tasks.add_task(save_img, file_bytes, "raw", file_name)
+    
+    # 根据配置决定是否保存图片
+    if custom_conf.auto_save_image:
+        background_tasks.add_task(save_img, cn_file_bytes, "cn", file_name)
+        background_tasks.add_task(save_img, file_bytes, "raw", file_name)
+    
     b64_img = base64.b64encode(cn_file_bytes).decode("utf8") if include_res_img else None
-    return all_text, cn_text, price, (b64_img, file_name)
+    return all_text, cn_text, price, (b64_img, file_name), timings
 
 
 def _error_response(info: str, status_code: int) -> JSONResponse:
@@ -131,7 +165,7 @@ async def translate_upload(
     start = time.time()
     try:
         file_bytes = await img.read()
-        all_text, cn_text, price, img_result = await _translate_image_bytes(
+        all_text, cn_text, price, img_result, timings = await _translate_image_bytes(
             file_bytes=file_bytes,
             include_res_img=include_res_img,
             background_tasks=background_tasks,
@@ -148,8 +182,8 @@ async def translate_upload(
             "info": f"{e}",
         })
     b64_img, file_name = img_result
-    duration = round(time.time() - start, 2)
-    logger.info(f"翻译图片成功，耗时 {duration} 秒，保存为{file_name}")
+    duration = round(time.time() - start, 3)
+    logger.info(f"翻译成功 [{file_name}] 总耗时 {duration}s | 各阶段(ms): decode={timings['decode']}, detect={timings['detect']}, mask_ocr={timings['mask_ocr']}, translate={timings['translate']}, draw={timings['draw']}, encode={timings['encode']}")
     return JSONResponse(content={
         "status": "success",
         "duration": duration,
@@ -201,7 +235,11 @@ class TranslateWebRequest(BaseModel):
 @manga_translate_router.post("/api/v1/translate/web")
 async def translate_web(request: Request, background_tasks: BackgroundTasks):
     start = time.time()
+    timings = {}
+    
     try:
+        # 请求解析
+        t_parse = _now_ms()
         ensure_body_size_within_limit(content_length=request.headers.get("content-length"))
         body = await request.body()
         ensure_body_size_within_limit(actual_size=len(body))
@@ -210,25 +248,33 @@ async def translate_web(request: Request, background_tasks: BackgroundTasks):
         payload = json.loads(body)
         if not isinstance(payload, dict):
             raise TranslateWebInputError(400, "请求体必须是 JSON 对象")
+        timings["parse"] = _elapsed_ms(t_parse)
 
         req = TranslateWebRequest.model_validate(payload)
+        
+        # 图片获取
+        t_fetch = _now_ms()
         if req.image_url is not None:
             file_bytes = await _download_image_bytes(req.image_url, req.referer)
         else:
             file_bytes = decode_image_base64_data_url(req.image_base64)
-        all_text, cn_text, price, img_result = await _translate_image_bytes(
+        timings["fetch"] = _elapsed_ms(t_fetch)
+        
+        all_text, cn_text, price, img_result, proc_timings = await _translate_image_bytes(
             file_bytes=file_bytes,
             include_res_img=req.include_res_img,
             background_tasks=background_tasks,
         )
+        timings.update(proc_timings)
+        
         if all_text is None:
             return JSONResponse(content={
                 "status": "error",
                 "info": "未检测出文字",
             })
         b64_img, file_name = img_result
-        duration = round(time.time() - start, 2)
-        logger.info(f"翻译图片成功，耗时 {duration} 秒，保存为{file_name}")
+        duration = round(time.time() - start, 3)
+        logger.info(f"翻译成功 [{file_name}] 总耗时 {duration}s | 各阶段(ms): parse={timings.get('parse', 0)}, fetch={timings.get('fetch', 0)}, decode={timings['decode']}, detect={timings['detect']}, mask_ocr={timings['mask_ocr']}, translate={timings['translate']}, draw={timings['draw']}, encode={timings['encode']}")
         return JSONResponse(content={
             "status": "success",
             "duration": duration,

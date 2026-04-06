@@ -38,4 +38,5 @@ def query_conf_options():
         "translate_api_type": list(TRANSLATE_API_TYPE_OPTIONS),
         "translate_mode": list(TRANSLATE_MODE_OPTIONS),
         "ocr_engine": list(OCR_ENGINE_OPTIONS),
+        "auto_save_image": [True, False],
     }

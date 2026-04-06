@@ -12,6 +12,9 @@ if _DEFAULT_OCR_ENGINE not in OCR_ENGINE_OPTIONS:
     logger.warning(f"无效的 MOEGAL_OCR_ENGINE={_DEFAULT_OCR_ENGINE}，使用默认值 local")
     _DEFAULT_OCR_ENGINE = "local"
 
+# 从环境变量读取是否自动保存图片（默认关闭）
+_AUTO_SAVE_IMAGE = os.getenv("AUTO_SAVE_IMAGE", "false").lower() in ("true", "1", "yes")
+
 
 class CustomConf:
     def __init__(
@@ -22,11 +25,14 @@ class CustomConf:
             translate_mode="parallel",
             # local: 本地 OCR 模型（MangaOCR/PaddleOCR）；vision: 多模态模型 OCR
             ocr_engine=None,
+            # 是否自动保存翻译前后的图片（默认由环境变量决定）
+            auto_save_image=None,
             ):
         self.translate_api_type = translate_api_type
         self.translate_mode = translate_mode
         # OCR 引擎默认值由环境变量 MOEGAL_OCR_ENGINE 决定
         self.ocr_engine = ocr_engine if ocr_engine else _DEFAULT_OCR_ENGINE
+        self.auto_save_image = auto_save_image if auto_save_image is not None else _AUTO_SAVE_IMAGE
 
     def update_conf(self, attr, v):
         assert hasattr(self, attr), f"attr '{attr}' is not exists."
@@ -42,6 +48,8 @@ class CustomConf:
             assert v in OCR_ENGINE_OPTIONS, (
                 f"ocr_engine 必须是 {OCR_ENGINE_OPTIONS}"
             )
+        if attr == "auto_save_image":
+            v = v if isinstance(v, bool) else str(v).lower() in ("true", "1", "yes")
         setattr(self, attr, v)
         logger.info(f"将 {attr} 设置为 {v}")
         return {
