@@ -42,7 +42,7 @@ set "TOOLS_DIR=%ROOT_DIR%.tools"
 set "UV_HOME=%TOOLS_DIR%\uv\"
 set "VENV_PYTHON=%ROOT_DIR%.venv\Scripts\python.exe"
 
-REM 优先使用全局安装的 uv
+REM ????????? uv
 where uv >nul 2>&1
 if %errorlevel%==0 (
     set "UV_BIN=uv"
@@ -67,7 +67,7 @@ if not "%UV_BIN%"=="uv" if not exist "%UV_BIN%" (
     )
     set "UV_ZIP_URL=https://github.com/astral-sh/uv/releases/latest/download/uv-!UV_ARCH!-pc-windows-msvc.zip"
     if not exist "%UV_HOME%" mkdir "%UV_HOME%"
-    powershell -NoProfile -Command "Invoke-WebRequest -UseBasicParsing -Uri '!UV_ZIP_URL!' -OutFile \"$env:TEMP\uv.zip\"; Expand-Archive -Path \"$env:TEMP\uv.zip\" -DestinationPath \"$env:TEMP\uv_extract\" -Force; Copy-Item (Get-ChildItem -Path \"$env:TEMP\uv_extract\" -Recurse -Filter 'uv.exe' ^| Select-Object -First 1).FullName '!UV_BIN!' -Force"
+    powershell -NoProfile -Command "Invoke-WebRequest -UseBasicParsing -Uri '!UV_ZIP_URL!' -OutFile "C:\Users\jingyue\AppData\Local\Temp\uv.zip"; Expand-Archive -Path "C:\Users\jingyue\AppData\Local\Temp\uv.zip" -DestinationPath "C:\Users\jingyue\AppData\Local\Temp\uv_extract" -Force; Copy-Item (Get-ChildItem -Path "C:\Users\jingyue\AppData\Local\Temp\uv_extract" -Recurse -Filter 'uv.exe' ^| Select-Object -First 1).FullName '!UV_BIN!' -Force"
 )
 
 echo Installing Python 3.12...
