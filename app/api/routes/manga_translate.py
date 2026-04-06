@@ -76,7 +76,9 @@ async def _translate_image_bytes(
     # 使用优化后的检测函数
     bboxes = detect_text_regions(img_bgr_cv)
     
-    all_text, inpaint = await get_text_masked_pic(img_pil, img_bgr_cv, bboxes, True)
+    all_text, inpaint = await get_text_masked_pic(
+        img_pil, img_bgr_cv, bboxes, True, custom_conf.ocr_engine
+    )
     if len(all_text) == 0:
         logger.warning("未检测出文字")
         return None, None, None, None

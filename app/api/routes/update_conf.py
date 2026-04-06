@@ -3,6 +3,7 @@ from app.core.custom_conf import (
     custom_conf,
     TRANSLATE_API_TYPE_OPTIONS,
     TRANSLATE_MODE_OPTIONS,
+    OCR_ENGINE_OPTIONS,
 )
 from pydantic import BaseModel
 from typing import Union
@@ -15,9 +16,10 @@ class UpdateItem(BaseModel):
 
 @update_conf_router.post("/conf/init")
 def init_conf():
-    # 初始化默认值：OpenAI + 并行模式。
+    # 初始化默认值：OpenAI + 并行模式 + 本地 OCR。
     custom_conf.update_conf("translate_api_type", "openai")
     custom_conf.update_conf("translate_mode", "parallel")
+    custom_conf.update_conf("ocr_engine", "local")
     return custom_conf.to_dict()
 
 @update_conf_router.post("/conf/update")
@@ -35,4 +37,5 @@ def query_conf_options():
     return {
         "translate_api_type": list(TRANSLATE_API_TYPE_OPTIONS),
         "translate_mode": list(TRANSLATE_MODE_OPTIONS),
+        "ocr_engine": list(OCR_ENGINE_OPTIONS),
     }

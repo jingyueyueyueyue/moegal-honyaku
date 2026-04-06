@@ -1,3 +1,5 @@
+import base64
+import io
 import os
 import re
 from threading import Lock
@@ -5,6 +7,7 @@ from threading import Lock
 import torch
 from dotenv import load_dotenv
 from manga_ocr import MangaOcr
+from openai import OpenAI
 from ultralytics import YOLO
 
 from app.core.logger import logger
@@ -14,32 +17,35 @@ DET_MODEL_PATH = MODELS_DIR / "comic-text-segmenter.pt"
 MOCR_MODEL_PATH = MODELS_DIR / "manga-ocr-base"
 load_dotenv()
 
-# ============ YOLO 检测参数（通过环境变量调整）============
-# 置信度阈值：越低检测越多的文字区域，但可能有误检（默认0.25）
+# ============ YOLO 文本检测参数 ============
+# 置信度阈值：越低检测越多文字区域，但可能有误检（默认 0.25，范围 0.1-0.5）
 DET_CONF_THRESHOLD = float(os.getenv("DET_CONF_THRESHOLD", "0.25"))
-# IOU 阈值：用于合并重叠框（默认0.5）
+# IOU 阈值：用于合并重叠的检测框（默认 0.5）
 DET_IOU_THRESHOLD = float(os.getenv("DET_IOU_THRESHOLD", "0.5"))
-# 检测图像尺寸：越大检测越精确但越慢（默认1024，范围512-2048）
+# 检测图像尺寸：越大检测越精确但越慢（默认 1024，范围 512-2048）
 DET_IMG_SIZE = int(os.getenv("DET_IMG_SIZE", "1024"))
-# 是否增强对比度预处理
+# 是否在检测前增强对比度（对低对比度图片有帮助）
 DET_ENHANCE_CONTRAST = os.getenv("DET_ENHANCE_CONTRAST", "true").lower() in ("true", "1", "yes")
 
 # ============ OCR 引擎配置 ============
-# OCR 引擎选择：manga_ocr（仅日文）, paddle_ocr（多语言）, auto（自动检测语言）
+# 本地 OCR 引擎细分选择（仅当 ocr_engine=local 时生效）：
+# - manga_ocr: 仅支持日文，准确率高
+# - paddle_ocr: 支持多语言（日/英/中/韩等）
+# - auto: 自动检测语言，优先用 MangaOCR，英文时回退 PaddleOCR
 OCR_ENGINE = os.getenv("OCR_ENGINE", "auto").lower()
-# PaddleOCR 语言设置（默认日文+英文+中文）
+# PaddleOCR 语言设置（默认日文，可选：en, ch, korean 等）
 PADDLE_OCR_LANG = os.getenv("PADDLE_OCR_LANG", "japan")
-# 是否使用 PaddleOCR 的轻量级模型（适合CPU）
+# 是否使用 PaddleOCR 轻量级模型（推荐 CPU 环境开启，速度更快）
 PADDLE_OCR_LITE = os.getenv("PADDLE_OCR_LITE", "true").lower() in ("true", "1", "yes")
 
 # ============ OCR 高级优化参数 ============
-# 是否启用OCR图像预处理
+# 是否启用 OCR 图像预处理（降噪 + 对比度增强 + 锐化），提升模糊图片识别率
 OCR_PREPROCESS = os.getenv("OCR_PREPROCESS", "true").lower() in ("true", "1", "yes")
-# 是否启用OCR后处理（清理噪声）
+# 是否启用 OCR 后处理（清理噪声字符，如多余竖线、重复字符等）
 OCR_POSTPROCESS = os.getenv("OCR_POSTPROCESS", "true").lower() in ("true", "1", "yes")
-# OCR 置信度过滤阈值（PaddleOCR）
+# OCR 置信度过滤阈值（仅对 PaddleOCR 生效，低于此值的结果会被过滤）
 OCR_CONF_THRESHOLD = float(os.getenv("OCR_CONF_THRESHOLD", "0.5"))
-# 是否启用文本方向校正
+# 是否启用文本方向自动校正（识别倾斜/旋转的文字）
 OCR_AUTO_ROTATE = os.getenv("OCR_AUTO_ROTATE", "true").lower() in ("true", "1", "yes")
 
 _MODEL_LOCK = Lock()
@@ -315,7 +321,7 @@ def ocr_recognize(image_pil, prefer_engine: str = None) -> str:
     
     Args:
         image_pil: PIL Image 对象
-        prefer_engine: 指定引擎 ('manga_ocr', 'paddle_ocr', 'auto')
+        prefer_engine: 指定引擎 ('manga_ocr', 'paddle_ocr', 'auto', 'vision', 'local')
         
     Returns:
         识别出的文本
@@ -324,6 +330,14 @@ def ocr_recognize(image_pil, prefer_engine: str = None) -> str:
     import numpy as np
     
     engine = prefer_engine or OCR_ENGINE
+    
+    # 多模态 OCR 模式
+    if engine == 'vision':
+        return vision_ocr_recognize(image_pil)
+    
+    # local 模式：使用本地模型（auto 逻辑）
+    if engine == 'local':
+        engine = 'auto'
     
     # 如果指定了 PaddleOCR
     if engine == 'paddle_ocr':
@@ -439,3 +453,112 @@ def detect_text_regions(image_cv):
     logger.info(f"检测到 {len(filtered_bboxes)} 个文字区域（原始 {len(bboxes)} 个）")
     
     return filtered_bboxes
+
+
+# ============ 多模态 OCR 配置（仅当 ocr_engine=vision 时生效）============
+# 多模态 API 供应商：openai 或 dashscope
+VISION_OCR_PROVIDER = os.getenv("VISION_OCR_PROVIDER", "openai").lower()
+
+# ===== OpenAI 兼容 API 配置 =====
+# 优先使用独立配置，未配置则回退到翻译服务的 OpenAI 配置
+VISION_OPENAI_API_KEY = os.getenv("VISION_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+VISION_OPENAI_BASE_URL = os.getenv("VISION_OPENAI_BASE_URL") or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+VISION_OCR_MODEL = os.getenv("VISION_OCR_MODEL") or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+# ===== DashScope API 配置 =====
+# 优先使用独立配置，未配置则回退到翻译服务的 DashScope 配置
+VISION_DASHSCOPE_API_KEY = os.getenv("VISION_DASHSCOPE_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+VISION_DASHSCOPE_BASE_URL = os.getenv("VISION_DASHSCOPE_BASE_URL") or os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+VISION_DASHSCOPE_MODEL = os.getenv("VISION_DASHSCOPE_MODEL") or os.getenv("DASHSCOPE_MODEL", "qwen-vl-plus")
+
+# OCR 提示词：要求模型仅输出识别的文字，不翻译、不解释
+VISION_OCR_PROMPT = os.getenv(
+    "VISION_OCR_PROMPT",
+    "请识别这张图片中的所有文字，只输出识别到的文字内容，不要添加任何解释、翻译或格式化。"
+    "如果有多行文字，用换行符分隔。如果没有文字，返回空字符串。"
+)
+
+_VISION_CLIENT = None
+
+
+def _get_vision_client():
+    """获取多模态 API 客户端（懒加载）"""
+    global _VISION_CLIENT
+    if _VISION_CLIENT is not None:
+        return _VISION_CLIENT
+    
+    if VISION_OCR_PROVIDER == "openai":
+        api_key = VISION_OPENAI_API_KEY
+        base_url = VISION_OPENAI_BASE_URL
+        model = VISION_OCR_MODEL
+        if not api_key:
+            raise RuntimeError("VISION_OCR_PROVIDER=openai 但 VISION_OPENAI_API_KEY 和 OPENAI_API_KEY 均未配置")
+    elif VISION_OCR_PROVIDER == "dashscope":
+        api_key = VISION_DASHSCOPE_API_KEY
+        base_url = VISION_DASHSCOPE_BASE_URL
+        model = VISION_DASHSCOPE_MODEL
+        if not api_key:
+            raise RuntimeError("VISION_OCR_PROVIDER=dashscope 但 VISION_DASHSCOPE_API_KEY 和 DASHSCOPE_API_KEY 均未配置")
+    else:
+        raise RuntimeError(f"不支持的 VISION_OCR_PROVIDER: {VISION_OCR_PROVIDER}")
+    
+    _VISION_CLIENT = OpenAI(api_key=api_key, base_url=base_url)
+    logger.info(f"多模态 OCR 客户端初始化成功: provider={VISION_OCR_PROVIDER}, base_url={base_url}, model={model}")
+    return _VISION_CLIENT
+
+
+def _get_vision_model() -> str:
+    """获取当前配置的多模态模型名称"""
+    if VISION_OCR_PROVIDER == "openai":
+        return VISION_OCR_MODEL
+    elif VISION_OCR_PROVIDER == "dashscope":
+        return VISION_DASHSCOPE_MODEL
+    return "gpt-4o-mini"
+
+
+def vision_ocr_recognize(image_pil) -> str:
+    """
+    使用多模态模型进行 OCR 识别
+    
+    Args:
+        image_pil: PIL Image 对象
+        
+    Returns:
+        识别出的文本
+    """
+    client = _get_vision_client()
+    model = _get_vision_model()
+    
+    # 将 PIL Image 转为 base64
+    buffer = io.BytesIO()
+    image_pil.save(buffer, format="PNG")
+    image_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": VISION_OCR_PROMPT},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{image_base64}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=1000,
+        )
+        
+        text = response.choices[0].message.content or ""
+        text = text.strip()
+        logger.debug(f"多模态 OCR 识别结果: {text[:50]}...")
+        return text
+        
+    except Exception as e:
+        logger.error(f"多模态 OCR 识别失败: {e}")
+        return ""

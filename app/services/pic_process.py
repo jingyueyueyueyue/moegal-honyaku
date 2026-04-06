@@ -147,7 +147,7 @@ def _build_text_mask(cropped_cv: np.ndarray) -> np.ndarray:
     return mask
 
 
-async def get_text_masked_pic(image_pil, image_cv, bboxes, inpaint=True):
+async def get_text_masked_pic(image_pil, image_cv, bboxes, inpaint=True, ocr_engine: str = None):
     mask = np.zeros(image_cv.shape[:2], dtype=np.uint8)
     if len(bboxes) == 0:
         return [], image_cv
@@ -159,7 +159,7 @@ async def get_text_masked_pic(image_pil, image_cv, bboxes, inpaint=True):
         x1, y1, x2, y2 = _sanitize_bbox(bbox, width, height)
         cropped_image = image_pil.crop((x1, y1, x2, y2))
         async with semaphore:
-            text = await asyncio.to_thread(ocr_recognize, cropped_image)
+            text = await asyncio.to_thread(ocr_recognize, cropped_image, ocr_engine)
         local_mask = _build_text_mask(image_cv[y1:y2, x1:x2])
         return text, (x1, y1, x2, y2), local_mask
 
@@ -193,6 +193,12 @@ def wrap_text_by_width(draw, text, font, max_width):
     lines = []
     line = ''
     for char in text:
+        # 遇到换行符直接换行
+        if char == '\n':
+            if line:
+                lines.append(line)
+            line = ''
+            continue
         test_line = line + char
         w = draw.textlength(test_line, font=font)
         if w <= max_width:
