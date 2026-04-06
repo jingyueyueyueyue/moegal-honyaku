@@ -53,8 +53,6 @@ fi
 export UV_CACHE_DIR="$ROOT_DIR/.cache/uv"
 export UV_PYTHON_INSTALL_DIR="$ROOT_DIR/.python"
 export UV_PROJECT_ENVIRONMENT="$ROOT_DIR/.venv"
-export UV_PYTHON_PREFERENCE=managed
-export UV_PYTHON_INSTALL_BIN=0
 
 if [ -z "$UV_DEFAULT_INDEX" ]; then
     export UV_DEFAULT_INDEX="https://pypi.tuna.tsinghua.edu.cn/simple"
@@ -79,8 +77,17 @@ if [ "$UV_BIN" != "uv" ] && [ ! -f "$UV_BIN" ]; then
     echo "uv downloaded successfully."
 fi
 
-echo "Installing Python 3.12..."
-"$UV_BIN" python install 3.12 --no-bin
+# 检查虚拟环境是否已存在且可用
+if [ -f "$VENV_PYTHON" ]; then
+    echo "检测到已有虚拟环境，跳过 Python 安装..."
+else
+    echo "Installing Python 3.12..."
+    # 使用系统 Python 如果可用
+    if command -v python3.12 &> /dev/null; then
+        export UV_PYTHON_PREFERENCE=system
+    fi
+    "$UV_BIN" python install 3.12 --no-bin
+fi
 
 echo "正在安装 PyTorch..."
 "$UV_BIN" pip install $TORCH_VERSION --extra-index-url $TORCH_INDEX_URL
