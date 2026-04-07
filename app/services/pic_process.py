@@ -36,28 +36,50 @@ def _sanitize_bbox(bbox, width: int, height: int):
 
 
 def _build_text_mask_basic(cropped_cv: np.ndarray) -> np.ndarray:
-    """基础版掩码生成（原算法）"""
+    """基础版掩码生成（智能检测深色或浅色文字）"""
     if cropped_cv.size == 0:
         return np.zeros((0, 0), dtype=np.uint8)
 
     gray = cv2.cvtColor(cropped_cv, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (3, 3), 0)
+    height, width = gray.shape[:2]
+    area = height * width
 
-    # 黑帽突出深色细节
-    kernel_size = max(3, min(11, (min(cropped_cv.shape[:2]) // 10) * 2 + 1))
+    kernel_size = max(3, min(11, (min(height, width) // 10) * 2 + 1))
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
-    blackhat = cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, kernel)
-    _, bh_mask = cv2.threshold(blackhat, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    # 兜底保留极深像素
-    p15 = float(np.percentile(blur, 15))
-    dark_threshold = int(max(30, min(120, p15)))
-    dark_mask = cv2.inRange(blur, 0, dark_threshold)
+    # ===== 判断背景亮度 =====
+    # 使用中位数判断背景是深色还是浅色
+    median_luma = float(np.median(blur))
 
-    merged = cv2.bitwise_or(bh_mask, dark_mask)
+    if median_luma < 128:
+        # ===== 深色背景（黑底）：检测浅色文字 =====
+        # 白帽运算突出比背景更亮的细节
+        tophat = cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, kernel)
+        _, th_mask = cv2.threshold(tophat, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # 极亮像素检测
+        p90 = float(np.percentile(blur, 90))
+        bright_threshold = int(max(180, min(250, p90)))
+        bright_mask = cv2.inRange(blur, bright_threshold, 255)
+
+        merged = cv2.bitwise_or(th_mask, bright_mask)
+    else:
+        # ===== 浅色背景（白底）：检测深色文字（原算法）=====
+        # 黑帽运算突出比背景更暗的细节
+        blackhat = cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, kernel)
+        _, bh_mask = cv2.threshold(blackhat, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # 极深像素检测
+        p15 = float(np.percentile(blur, 15))
+        dark_threshold = int(max(30, min(120, p15)))
+        dark_mask = cv2.inRange(blur, 0, dark_threshold)
+
+        merged = cv2.bitwise_or(bh_mask, dark_mask)
+
+    # 连通域过滤
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(merged, connectivity=8)
     filtered = np.zeros_like(merged)
-    area = cropped_cv.shape[0] * cropped_cv.shape[1]
     min_area = max(6, int(area * 0.0002))
     max_area = max(20, int(area * 0.2))
     for idx in range(1, num_labels):
@@ -69,7 +91,7 @@ def _build_text_mask_basic(cropped_cv: np.ndarray) -> np.ndarray:
 
 
 def _build_text_mask_enhanced(cropped_cv: np.ndarray) -> np.ndarray:
-    """增强版掩码生成 - 多策略融合"""
+    """增强版掩码生成 - 智能检测深色或浅色文字"""
     if cropped_cv.size == 0:
         return np.zeros((0, 0), dtype=np.uint8)
 
@@ -80,51 +102,74 @@ def _build_text_mask_enhanced(cropped_cv: np.ndarray) -> np.ndarray:
     # 高斯模糊降噪
     blur = cv2.GaussianBlur(gray, (3, 3), 0)
 
-    # ===== 策略1: 黑帽运算检测深色文字 =====
     kernel_size = max(3, min(15, (min(height, width) // 8) * 2 + 1))
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
-    blackhat = cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, kernel)
-    _, bh_mask = cv2.threshold(blackhat, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    # ===== 策略2: 自适应阈值检测 =====
-    # 适用于光照不均匀的气泡
-    adaptive_mask = cv2.adaptiveThreshold(
-        blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV, blockSize=11, C=2
-    )
+    # ===== 判断背景亮度 =====
+    median_luma = float(np.median(blur))
+    mean_luma = float(np.mean(blur))
 
-    # ===== 策略3: 深色像素直方图检测 =====
-    # 动态确定深色阈值
-    hist = cv2.calcHist([blur], [0], None, [256], [0, 256])
-    # 找到直方图的低谷作为阈值
-    p10 = float(np.percentile(blur, 10))
-    p25 = float(np.percentile(blur, 25))
-    dark_threshold = int(max(20, min(100, (p10 + p25) / 2)))
-    dark_mask = cv2.inRange(blur, 0, dark_threshold)
-
-    # ===== 策略4: 边缘检测辅助 =====
+    # 边缘检测（用于辅助）
     edges = cv2.Canny(blur, 50, 150)
     edges_dilated = cv2.dilate(edges, np.ones((2, 2), np.uint8), iterations=1)
 
-    # ===== 融合多策略 =====
-    merged = cv2.bitwise_or(bh_mask, dark_mask)
-    merged = cv2.bitwise_or(merged, cv2.bitwise_and(adaptive_mask, edges_dilated))
+    if median_luma < 128:
+        # ===== 深色背景（黑底）：检测浅色文字 =====
+        # 白帽运算突出比背景更亮的细节
+        tophat = cv2.morphologyEx(blur, cv2.MORPH_TOPHAT, kernel)
+        _, th_mask = cv2.threshold(tophat, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # 自适应阈值检测亮色文字
+        adaptive_mask = cv2.adaptiveThreshold(
+            blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY, blockSize=11, C=2
+        )
+
+        # 极亮像素检测
+        p90 = float(np.percentile(blur, 90))
+        bright_threshold = int(max(180, min(250, p90)))
+        bright_mask = cv2.inRange(blur, bright_threshold, 255)
+
+        # 融合策略
+        merged = cv2.bitwise_or(th_mask, bright_mask)
+        # 自适应阈值结果与边缘结合，减少噪声
+        merged = cv2.bitwise_or(merged, cv2.bitwise_and(adaptive_mask, edges_dilated))
+    else:
+        # ===== 浅色背景（白底）：检测深色文字 =====
+        # 黑帽运算突出比背景更暗的细节
+        blackhat = cv2.morphologyEx(blur, cv2.MORPH_BLACKHAT, kernel)
+        _, bh_mask = cv2.threshold(blackhat, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # 自适应阈值检测暗色文字
+        adaptive_mask = cv2.adaptiveThreshold(
+            blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV, blockSize=11, C=2
+        )
+
+        # 极深像素检测
+        p15 = float(np.percentile(blur, 15))
+        dark_threshold = int(max(30, min(120, p15)))
+        dark_mask = cv2.inRange(blur, 0, dark_threshold)
+
+        # 融合策略
+        merged = cv2.bitwise_or(bh_mask, dark_mask)
+        # 自适应阈值结果与边缘结合，减少噪声
+        merged = cv2.bitwise_or(merged, cv2.bitwise_and(adaptive_mask, edges_dilated))
 
     # ===== 连通域过滤 =====
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(merged, connectivity=8)
     filtered = np.zeros_like(merged)
 
-    min_area = max(4, int(area * 0.0001))  # 降低最小面积，保留更多细节
-    max_area = max(30, int(area * 0.4))    # 提高最大面积，处理大字体
+    min_area = max(4, int(area * 0.0001))
+    max_area = max(30, int(area * 0.4))
 
     for idx in range(1, num_labels):
         component_area = int(stats[idx, cv2.CC_STAT_AREA])
         if min_area <= component_area <= max_area:
-            # 检查宽高比，过滤掉极端形状
             w = stats[idx, cv2.CC_STAT_WIDTH]
             h = stats[idx, cv2.CC_STAT_HEIGHT]
             aspect_ratio = max(w, h) / max(1, min(w, h))
-            if aspect_ratio < 20:  # 过滤掉过长的线条
+            if aspect_ratio < 20:
                 filtered[labels == idx] = 255
 
     return filtered
