@@ -233,7 +233,7 @@ async def get_text_masked_pic(image_pil, image_cv, bboxes, inpaint=True, ocr_eng
 
 def wrap_text_by_width(draw, text, font, max_width):
     """
-    将文字根据实际像素宽度换行，返回行列表
+    将文字根据实际像素宽度换行，返回行列表（横排模式）
     """
     lines = []
     line = ''
@@ -257,6 +257,38 @@ def wrap_text_by_width(draw, text, font, max_width):
     return lines
 
 
+def wrap_text_vertical(text, font, max_height):
+    """
+    将文字根据实际像素高度分列，返回列列表（竖排模式）
+    竖排：从右到左，每列从上到下
+    """
+    columns = []
+    col = ''
+    col_height = 0
+    char_height = font.getbbox("中")[3] - font.getbbox("中")[1]
+    
+    for char in text:
+        if char == '\n':
+            if col:
+                columns.append(col)
+            col = ''
+            col_height = 0
+            continue
+        if col_height + char_height <= max_height:
+            col += char
+            col_height += char_height
+        else:
+            if col:
+                columns.append(col)
+            col = char
+            col_height = char_height
+    if col:
+        columns.append(col)
+    # 竖排从右到左，需要反转列顺序
+    columns.reverse()
+    return columns
+
+
 def _pick_text_style(cropped_cv: np.ndarray):
     if cropped_cv.size == 0:
         return (20, 20, 20), (245, 245, 245)
@@ -267,11 +299,25 @@ def _pick_text_style(cropped_cv: np.ndarray):
     return (245, 245, 245), (20, 20, 20)
 
 
-def draw_text_on_boxes(image: np.ndarray, boxes: list, texts: list) -> np.ndarray:
+def draw_text_on_boxes(image: np.ndarray, boxes: list, texts: list, text_direction: str = "horizontal") -> np.ndarray:
+    """
+    在指定区域绘制文字
+    
+    Args:
+        image: BGR 图像
+        boxes: 边界框列表
+        texts: 文本列表
+        text_direction: 文字方向 "horizontal"（横排）或 "vertical"（竖排）
+    
+    Returns:
+        绘制后的 BGR 图像
+    """
     height, width = image.shape[:2]
     img_pil = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
     draw = ImageDraw.Draw(img_pil)
-    line_spacing = 4  # 行间距
+    line_spacing = 4  # 行间距/列间距
+    char_height = None  # 用于竖排模式
+    
     for box, text in zip(boxes, texts):
         # 绘制文字使用原始边界框（不扩展），确保文字定位准确
         x1, y1, x2, y2 = map(int, box)
@@ -285,24 +331,59 @@ def draw_text_on_boxes(image: np.ndarray, boxes: list, texts: list) -> np.ndarra
         box_height = y2 - y1
         font_config = FontConfig(box_height, box_width, text)
         font = font_config.font
-        lines = wrap_text_by_width(draw, text, font, box_width)
-        line_height = font.getbbox("中")[3] - font.getbbox("中")[1]
-        total_height = line_height * len(lines) + line_spacing * max(0, len(lines) - 1)
-        start_y = y1 + max(0, (box_height - total_height) // 2)
         fill_color, stroke_color = _pick_text_style(image[y1:y2, x1:x2])
         stroke_width = max(1, int(font.size * 0.12))
-        for i, line in enumerate(lines):
-            y = start_y + i * (line_height + line_spacing)
-            line_width = draw.textlength(line, font=font)
-            x = x1 + max(0, int((box_width - line_width) / 2))
-            draw.text(
-                (x, y),
-                line,
-                font=font,
-                fill=fill_color,
-                stroke_width=stroke_width,
-                stroke_fill=stroke_color,
-            )
+        
+        if text_direction == "vertical":
+            # ===== 竖排模式 =====
+            char_height = font.getbbox("中")[3] - font.getbbox("中")[1]
+            char_width = int(draw.textlength("中", font=font))
+            columns = wrap_text_vertical(text, font, box_height)
+            
+            # 计算总宽度
+            col_spacing = line_spacing
+            total_width = len(columns) * char_width + max(0, len(columns) - 1) * col_spacing
+            
+            # 起始位置（水平居中）
+            start_x = x1 + max(0, (box_width - total_width) // 2)
+            
+            for col_idx, col in enumerate(columns):
+                # 从右到左绘制列
+                col_x = start_x + (len(columns) - 1 - col_idx) * (char_width + col_spacing)
+                # 垂直居中每列
+                col_height = len(col) * char_height
+                start_y = y1 + max(0, (box_height - col_height) // 2)
+                
+                for char_idx, char in enumerate(col):
+                    char_y = start_y + char_idx * char_height
+                    draw.text(
+                        (col_x, char_y),
+                        char,
+                        font=font,
+                        fill=fill_color,
+                        stroke_width=stroke_width,
+                        stroke_fill=stroke_color,
+                    )
+        else:
+            # ===== 横排模式（原逻辑）=====
+            lines = wrap_text_by_width(draw, text, font, box_width)
+            line_height = font.getbbox("中")[3] - font.getbbox("中")[1]
+            total_height = line_height * len(lines) + line_spacing * max(0, len(lines) - 1)
+            start_y = y1 + max(0, (box_height - total_height) // 2)
+            
+            for i, line in enumerate(lines):
+                y = start_y + i * (line_height + line_spacing)
+                line_width = draw.textlength(line, font=font)
+                x = x1 + max(0, int((box_width - line_width) / 2))
+                draw.text(
+                    (x, y),
+                    line,
+                    font=font,
+                    fill=fill_color,
+                    stroke_width=stroke_width,
+                    stroke_fill=stroke_color,
+                )
+    
     return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
 
 def save_img(file_bytes, pre: str, file_name: str):

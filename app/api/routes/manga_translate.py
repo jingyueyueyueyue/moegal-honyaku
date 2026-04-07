@@ -75,6 +75,7 @@ async def _translate_image_bytes(
     file_bytes: bytes,
     include_res_img: bool,
     background_tasks: BackgroundTasks,
+    text_direction: Literal["horizontal", "vertical"] = "horizontal",
 ):
     from app.services.ocr import detect_text_regions
     from app.services.pic_process import draw_text_on_boxes, get_text_masked_pic, save_img
@@ -114,7 +115,7 @@ async def _translate_image_bytes(
 
     # 绘制文字
     t4 = _now_ms()
-    img_res = draw_text_on_boxes(inpaint, bboxes, cn_text)
+    img_res = draw_text_on_boxes(inpaint, bboxes, cn_text, text_direction)
     timings["draw"] = _elapsed_ms(t4)
     
     # 编码结果图片
@@ -161,6 +162,7 @@ async def translate_upload(
     background_tasks: BackgroundTasks,
     img: UploadFile = File(...),
     include_res_img: bool = True,
+    text_direction: Literal["horizontal", "vertical"] = "horizontal",
 ):
     start = time.time()
     try:
@@ -169,6 +171,7 @@ async def translate_upload(
             file_bytes=file_bytes,
             include_res_img=include_res_img,
             background_tasks=background_tasks,
+            text_direction=text_direction,
         )
         if all_text is None:
             return JSONResponse(content={
@@ -200,6 +203,7 @@ class TranslateWebRequest(BaseModel):
     referer: str
     source_type: Literal["img", "canvas"] | None = None
     include_res_img: bool = True
+    text_direction: Literal["horizontal", "vertical"] = "horizontal"
 
     @field_validator("image_url", "image_base64", mode="before")
     @classmethod
@@ -220,6 +224,18 @@ class TranslateWebRequest(BaseModel):
             stripped = value.strip()
             return stripped or None
         return value
+
+    @field_validator("text_direction", mode="before")
+    @classmethod
+    def _normalize_text_direction(cls, value):
+        if value is None:
+            return "horizontal"
+        if isinstance(value, str):
+            stripped = value.strip().lower()
+            if stripped in ("horizontal", "vertical"):
+                return stripped
+            return "horizontal"
+        return "horizontal"
 
     @model_validator(mode="after")
     def validate_image_source(self):
@@ -264,6 +280,7 @@ async def translate_web(request: Request, background_tasks: BackgroundTasks):
             file_bytes=file_bytes,
             include_res_img=req.include_res_img,
             background_tasks=background_tasks,
+            text_direction=req.text_direction,
         )
         timings.update(proc_timings)
         
