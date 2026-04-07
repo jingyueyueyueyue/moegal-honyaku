@@ -261,6 +261,7 @@ def wrap_text_vertical(text, font, max_height):
     """
     将文字根据实际像素高度分列，返回列列表（竖排模式）
     竖排：从右到左，每列从上到下
+    返回的列表中，索引0是最先读到的文字（应画在最右边）
     """
     columns = []
     col = ''
@@ -284,8 +285,6 @@ def wrap_text_vertical(text, font, max_height):
             col_height = char_height
     if col:
         columns.append(col)
-    # 竖排从右到左，需要反转列顺序
-    columns.reverse()
     return columns
 
 
