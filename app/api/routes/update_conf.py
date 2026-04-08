@@ -39,4 +39,5 @@ def query_conf_options():
         "translate_mode": list(TRANSLATE_MODE_OPTIONS),
         "ocr_engine": list(OCR_ENGINE_OPTIONS),
         "auto_save_image": [True, False],
+        "enable_ai_linebreak": [True, False],
     }

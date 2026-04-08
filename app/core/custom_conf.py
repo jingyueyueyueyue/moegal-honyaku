@@ -15,6 +15,9 @@ if _DEFAULT_OCR_ENGINE not in OCR_ENGINE_OPTIONS:
 # 从环境变量读取是否自动保存图片（默认关闭）
 _AUTO_SAVE_IMAGE = os.getenv("AUTO_SAVE_IMAGE", "false").lower() in ("true", "1", "yes")
 
+# 从环境变量读取是否启用AI智能断句（默认启用）
+_ENABLE_AI_LINEBREAK = os.getenv("AI_LINEBREAK_ENABLED", "true").lower() in ("true", "1", "yes")
+
 
 class CustomConf:
     def __init__(
@@ -27,12 +30,16 @@ class CustomConf:
             ocr_engine=None,
             # 是否自动保存翻译前后的图片（默认由环境变量决定）
             auto_save_image=None,
+            # 是否启用AI智能断句（默认由环境变量决定）
+            enable_ai_linebreak=None,
             ):
         self.translate_api_type = translate_api_type
         self.translate_mode = translate_mode
         # OCR 引擎默认值由环境变量 MOEGAL_OCR_ENGINE 决定
         self.ocr_engine = ocr_engine if ocr_engine else _DEFAULT_OCR_ENGINE
         self.auto_save_image = auto_save_image if auto_save_image is not None else _AUTO_SAVE_IMAGE
+        # AI断句默认值由环境变量 AI_LINEBREAK_ENABLED 决定
+        self.enable_ai_linebreak = enable_ai_linebreak if enable_ai_linebreak is not None else _ENABLE_AI_LINEBREAK
 
     def update_conf(self, attr, v):
         assert hasattr(self, attr), f"attr '{attr}' is not exists."
@@ -49,6 +56,8 @@ class CustomConf:
                 f"ocr_engine 必须是 {OCR_ENGINE_OPTIONS}"
             )
         if attr == "auto_save_image":
+            v = v if isinstance(v, bool) else str(v).lower() in ("true", "1", "yes")
+        if attr == "enable_ai_linebreak":
             v = v if isinstance(v, bool) else str(v).lower() in ("true", "1", "yes")
         setattr(self, attr, v)
         logger.info(f"将 {attr} 设置为 {v}")

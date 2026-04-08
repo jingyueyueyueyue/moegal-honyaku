@@ -76,10 +76,24 @@ async def _translate_image_bytes(
     include_res_img: bool,
     background_tasks: BackgroundTasks,
     text_direction: Literal["horizontal", "vertical"] = "horizontal",
+    enable_linebreak: bool | None = None,
 ):
+    """
+    翻译图片的核心处理函数
+    
+    Args:
+        file_bytes: 图片字节数据
+        include_res_img: 是否在响应中包含结果图片的 base64
+        background_tasks: FastAPI 后台任务
+        text_direction: 文字方向 (horizontal/vertical)
+        enable_linebreak: 是否启用 AI 智能断句
+            - None: 使用全局配置 (custom_conf.enable_ai_linebreak)
+            - True: 强制启用
+            - False: 强制禁用
+    """
     from app.services.ocr import detect_text_regions
     from app.services.pic_process import draw_text_on_boxes, get_text_masked_pic, save_img
-    from app.services.translate_api import translate_req
+    from app.services.translate_api import translate_with_linebreak
 
     timings = {}  # 记录各阶段耗时
     
@@ -104,12 +118,16 @@ async def _translate_image_bytes(
         logger.warning("未检测出文字")
         return None, None, None, None, timings
 
-    # 翻译
+    # 确定是否启用 AI 断句（请求参数优先，否则使用全局配置）
+    use_linebreak = enable_linebreak if enable_linebreak is not None else custom_conf.enable_ai_linebreak
+
+    # 翻译（带AI断句）
     t3 = _now_ms()
-    cn_text, price = await translate_req(
+    cn_text, price = await translate_with_linebreak(
         all_text,
         api_type=custom_conf.translate_api_type,
         translate_mode=custom_conf.translate_mode,
+        enable_linebreak=use_linebreak,
     )
     timings["translate"] = _elapsed_ms(t3)
 
@@ -163,7 +181,20 @@ async def translate_upload(
     img: UploadFile = File(...),
     include_res_img: bool = True,
     text_direction: Literal["horizontal", "vertical"] = "horizontal",
+    enable_linebreak: bool | None = None,
 ):
+    """
+    上传图片翻译接口
+    
+    Args:
+        img: 上传的图片文件
+        include_res_img: 是否在响应中包含结果图片的 base64（默认 true）
+        text_direction: 文字方向，horizontal（横排）或 vertical（竖排）
+        enable_linebreak: 是否启用 AI 智能断句
+            - 不传：使用全局配置
+            - true：强制启用
+            - false：强制禁用
+    """
     start = time.time()
     try:
         file_bytes = await img.read()
@@ -172,6 +203,7 @@ async def translate_upload(
             include_res_img=include_res_img,
             background_tasks=background_tasks,
             text_direction=text_direction,
+            enable_linebreak=enable_linebreak,
         )
         if all_text is None:
             return JSONResponse(content={
@@ -204,6 +236,8 @@ class TranslateWebRequest(BaseModel):
     source_type: Literal["img", "canvas"] | None = None
     include_res_img: bool = True
     text_direction: Literal["horizontal", "vertical"] = "horizontal"
+    # AI 智能断句：None=使用全局配置，true=启用，false=禁用
+    enable_linebreak: bool | None = None
 
     @field_validator("image_url", "image_base64", mode="before")
     @classmethod
@@ -237,6 +271,21 @@ class TranslateWebRequest(BaseModel):
             return "horizontal"
         return "horizontal"
 
+    @field_validator("enable_linebreak", mode="before")
+    @classmethod
+    def _normalize_enable_linebreak(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in ("true", "1", "yes"):
+                return True
+            if lowered in ("false", "0", "no"):
+                return False
+        return None
+
     @model_validator(mode="after")
     def validate_image_source(self):
         has_url = bool(self.image_url)
@@ -250,6 +299,28 @@ class TranslateWebRequest(BaseModel):
 
 @manga_translate_router.post("/api/v1/translate/web")
 async def translate_web(request: Request, background_tasks: BackgroundTasks):
+    """
+    Web 端翻译接口（JSON 请求体）
+    
+    请求体示例：
+    {
+        "image_url": "https://example.com/manga.jpg",
+        "referer": "https://example.com",
+        "include_res_img": true,
+        "text_direction": "horizontal",
+        "enable_linebreak": true
+    }
+    
+    参数说明：
+    - image_url / image_base64: 图片来源（二选一）
+    - referer: 来源页面 URL（用于下载图片时携带）
+    - include_res_img: 是否返回结果图片的 base64
+    - text_direction: 文字方向 (horizontal/vertical)
+    - enable_linebreak: AI 智能断句
+        - 不传或传 null：使用全局配置
+        - true：强制启用
+        - false：强制禁用
+    """
     start = time.time()
     timings = {}
     
@@ -281,6 +352,7 @@ async def translate_web(request: Request, background_tasks: BackgroundTasks):
             include_res_img=req.include_res_img,
             background_tasks=background_tasks,
             text_direction=req.text_direction,
+            enable_linebreak=req.enable_linebreak,
         )
         timings.update(proc_timings)
         

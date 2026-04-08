@@ -150,21 +150,18 @@ def get_paddle_ocr():
     try:
         from paddleocr import PaddleOCR
 
-        # 轻量级模型配置
-        if PADDLE_OCR_LITE:
-            det_model_dir = None  # 使用默认轻量模型
-            rec_model_dir = None
-        else:
-            det_model_dir = None
-            rec_model_dir = None
-
+        # PaddleOCR 3.x 新 API
+        # 参数说明：
+        # - use_doc_orientation_classify: 是否使用文档方向分类
+        # - use_doc_unwarping: 是否使用文档矫正
+        # - use_textline_orientation: 是否使用文本行方向分类
+        # - lang: 语言设置（japan, en, ch, korean 等）
         _PADDLE_OCR = PaddleOCR(
+            use_doc_orientation_classify=True,
+            use_doc_unwarping=False,
+            use_textline_orientation=True,
             lang=PADDLE_OCR_LANG,
-            use_angle_cls=True,
-            use_gpu=False,  # CPU模式
             show_log=False,
-            det_model_dir=det_model_dir,
-            rec_model_dir=rec_model_dir,
         )
         logger.info(f"PaddleOCR 加载成功，语言: {PADDLE_OCR_LANG}")
         return _PADDLE_OCR
@@ -349,16 +346,22 @@ def ocr_recognize(image_pil, prefer_engine: str = None) -> str:
         
         # PIL 转 OpenCV
         img_cv = cv2.cvtColor(np.array(image_pil), cv2.COLOR_RGB2BGR)
-        result = paddle_ocr.ocr(img_cv, cls=True)
         
-        if not result or not result[0]:
+        # PaddleOCR 3.x 使用 predict() 方法
+        result = paddle_ocr.predict(input=img_cv)
+        
+        if not result:
             return ""
         
-        # 合并所有识别结果
+        # PaddleOCR 3.x 返回格式：每个 res 有 'rec_texts' 属性
         texts = []
-        for line in result[0]:
-            if line and len(line) >= 2:
-                texts.append(line[1][0])
+        for res in result:
+            if hasattr(res, 'rec_texts') and res.rec_texts:
+                texts.extend(res.rec_texts)
+            elif hasattr(res, 'res') and isinstance(res.res, dict):
+                # 兼容可能的返回格式
+                if 'rec_texts' in res.res:
+                    texts.extend(res.res['rec_texts'])
         
         return '\n'.join(texts)
     
@@ -377,13 +380,19 @@ def ocr_recognize(image_pil, prefer_engine: str = None) -> str:
             paddle_ocr = get_paddle_ocr()
             if paddle_ocr is not None:
                 img_cv = cv2.cvtColor(np.array(image_pil), cv2.COLOR_RGB2BGR)
-                result = paddle_ocr.ocr(img_cv, cls=True)
                 
-                if result and result[0]:
+                # PaddleOCR 3.x 使用 predict() 方法
+                result = paddle_ocr.predict(input=img_cv)
+                
+                if result:
                     texts = []
-                    for line in result[0]:
-                        if line and len(line) >= 2:
-                            texts.append(line[1][0])
+                    for res in result:
+                        if hasattr(res, 'rec_texts') and res.rec_texts:
+                            texts.extend(res.rec_texts)
+                        elif hasattr(res, 'res') and isinstance(res.res, dict):
+                            if 'rec_texts' in res.res:
+                                texts.extend(res.res['rec_texts'])
+                    
                     paddle_text = '\n'.join(texts)
                     
                     # 如果 PaddleOCR 结果更合理（更长或更可信），使用它
