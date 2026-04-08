@@ -8,13 +8,18 @@ from openai import AsyncOpenAI
 
 load_dotenv()
 
-# 统一翻译风格：仅输出翻译内容，不附加解释。
-TRANSLATE_SYSTEM_PROMPT = "将句子翻译成中文（如果是符号就直接输出，不要加任何解释、注解或括号内容，仅保留自然对话或原声风格的翻译。）"
-TRANSLATE_STRUCTURED_SYSTEM_PROMPT = (
+# ============ 翻译提示词配置（可通过 .env 自定义）============
+# 默认提示词：统一翻译风格，仅输出翻译内容，不附加解释
+_DEFAULT_TRANSLATE_PROMPT = "将句子翻译成中文（如果是符号就直接输出，不要加任何解释、注解或括号内容，仅保留自然对话或原声风格的翻译。）"
+_DEFAULT_TRANSLATE_STRUCTURED_PROMPT = (
     "你会收到一个 JSON 数组，每项是待翻译句子。"
     "请返回 JSON：{\"result\": [\"翻译1\", \"翻译2\", ...]}。"
     "只输出 JSON，不要输出任何多余文本。"
 )
+
+# 从环境变量读取提示词（未配置则使用默认值）
+TRANSLATE_SYSTEM_PROMPT = os.getenv("TRANSLATE_SYSTEM_PROMPT", _DEFAULT_TRANSLATE_PROMPT)
+TRANSLATE_STRUCTURED_SYSTEM_PROMPT = os.getenv("TRANSLATE_STRUCTURED_PROMPT", _DEFAULT_TRANSLATE_STRUCTURED_PROMPT)
 
 
 # DashScope OpenAI 兼容接口配置，可通过 .env 覆盖默认值。

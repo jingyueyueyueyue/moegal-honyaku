@@ -1,19 +1,19 @@
 @echo off
-chcp 65001 >nul 2>&1
 setlocal EnableExtensions EnableDelayedExpansion
 
-echo Select OCR Engine:
-echo   [1] Local OCR
-echo   [2] Vision OCR
-set /p OCR_CHOICE=Enter option [1/2] (default 1): 
+echo 请选择 OCR 引擎：
+echo   [1] 本地 OCR
+echo   [2] 多模态模型 OCR
+set /p OCR_CHOICE=请输入选项 [1/2] (默认 1): 
 if "%OCR_CHOICE%"=="" set "OCR_CHOICE=1"
 
 echo.
-echo Select Running Mode:
-echo   [1] RTX 50 series (CUDA 12.8)
-echo   [2] Other GPUs (CUDA 12.6)
-echo   [3] CPU Mode (No GPU)
-set /p GPU_CHOICE=Enter option [1/2/3] (default 2): 
+echo 请选择运行模式：
+echo   [1] RTX 50系列 (CUDA 12.8)
+echo   [2] 其他显卡 (CUDA 12.6)
+echo   [3] CPU 模式 (无 GPU，使用 MangaOCR，manga_ocr: 仅支持日文，准确率高)
+echo   [4] CPU + PaddleOCR 模式 (推荐低配服务器，paddle_ocr: 支持多语言（日/英/中/韩等），对 CPU 更友好)
+set /p GPU_CHOICE=请输入选项 [1/2/3/4] (默认 2): 
 if "%GPU_CHOICE%"=="" set "GPU_CHOICE=2"
 
 if "%OCR_CHOICE%"=="1" set "MOEGAL_OCR_ENGINE=local"
@@ -23,16 +23,26 @@ if "%GPU_CHOICE%"=="1" (
     set "REQUIREMENTS_FILE=requirements-cu128.txt"
     set "TORCH_VERSION=torch==2.7.1+cu128 torchvision==0.22.1+cu128"
     set "TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128"
+    set "MOEGAL_USE_GPU=1"
 )
 if "%GPU_CHOICE%"=="2" (
     set "REQUIREMENTS_FILE=requirements-cu126.txt"
     set "TORCH_VERSION=torch==2.7.1+cu126 torchvision==0.22.1+cu126"
     set "TORCH_INDEX_URL=https://download.pytorch.org/whl/cu126"
+    set "MOEGAL_USE_GPU=1"
 )
 if "%GPU_CHOICE%"=="3" (
     set "REQUIREMENTS_FILE=requirements-cpu.txt"
     set "TORCH_VERSION=torch==2.7.1+cpu torchvision==0.22.1+cpu"
     set "TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu"
+    set "MOEGAL_USE_GPU=0"
+)
+if "%GPU_CHOICE%"=="4" (
+    set "REQUIREMENTS_FILE=requirements-cpu-paddle.txt"
+    set "TORCH_VERSION=torch==2.7.1+cpu torchvision==0.22.1+cpu"
+    set "TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu"
+    set "MOEGAL_USE_GPU=0"
+    set "OCR_ENGINE=paddle_ocr"
 )
 
 set "ROOT_DIR=%~dp0"
@@ -42,7 +52,7 @@ set "TOOLS_DIR=%ROOT_DIR%.tools"
 set "UV_HOME=%TOOLS_DIR%\uv\"
 set "VENV_PYTHON=%ROOT_DIR%.venv\Scripts\python.exe"
 
-REM ????????? uv
+REM 优先使用全局安装的 uv
 where uv >nul 2>&1
 if %errorlevel%==0 (
     set "UV_BIN=uv"
@@ -59,7 +69,7 @@ set "UV_PYTHON_INSTALL_BIN=0"
 if not defined UV_DEFAULT_INDEX set "UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple"
 
 if not "%UV_BIN%"=="uv" if not exist "%UV_BIN%" (
-    echo Downloading uv...
+    echo 正在下载 uv...
     if "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
         set "UV_ARCH=aarch64"
     ) else (
@@ -67,18 +77,18 @@ if not "%UV_BIN%"=="uv" if not exist "%UV_BIN%" (
     )
     set "UV_ZIP_URL=https://github.com/astral-sh/uv/releases/latest/download/uv-!UV_ARCH!-pc-windows-msvc.zip"
     if not exist "%UV_HOME%" mkdir "%UV_HOME%"
-    powershell -NoProfile -Command "Invoke-WebRequest -UseBasicParsing -Uri '!UV_ZIP_URL!' -OutFile \"$env:TEMP\uv.zip\"; Expand-Archive -Path \"$env:TEMP\uv.zip\" -DestinationPath \"$env:TEMP\uv_extract\" -Force; Copy-Item (Get-ChildItem -Path \"$env:TEMP\uv_extract\" -Recurse -Filter 'uv.exe' ^| Select-Object -First 1).FullName '!UV_BIN!' -Force"
+    powershell -NoProfile -Command "Invoke-WebRequest -UseBasicParsing -Uri '!UV_ZIP_URL!' -OutFile \`"$env:TEMP\uv.zip\`"; Expand-Archive -Path \`"$env:TEMP\uv.zip\`" -DestinationPath \`"$env:TEMP\uv_extract\`" -Force; Copy-Item (Get-ChildItem -Path \`"$env:TEMP\uv_extract\`" -Recurse -Filter 'uv.exe' ^| Select-Object -First 1).FullName '!UV_BIN!' -Force"
 )
 
-echo Installing Python 3.12...
+echo 正在安装 Python 3.12...
 "%UV_BIN%" python install 3.12 --no-bin
 
-echo Installing PyTorch...
+echo 正在安装 PyTorch...
 "%UV_BIN%" pip install %TORCH_VERSION% --extra-index-url %TORCH_INDEX_URL%
 
-echo Installing other dependencies...
+echo 正在安装其他依赖...
 "%UV_BIN%" pip install -r "%REQUIREMENTS_FILE%" --index-strategy unsafe-best-match
 
-echo Starting service...
+echo 启动服务...
 "%VENV_PYTHON%" -m uvicorn main:app --host 0.0.0.0 --port 8000
 pause

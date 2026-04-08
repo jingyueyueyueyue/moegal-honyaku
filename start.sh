@@ -10,8 +10,9 @@ echo ""
 echo "请选择运行模式："
 echo "  [1] RTX 50系列 (CUDA 12.8)"
 echo "  [2] 其他显卡 (CUDA 12.6)"
-echo "  [3] CPU 模式 (无 GPU)"
-read -p "请输入选项 [1/2/3] (默认 2): " GPU_CHOICE
+echo "  [3] CPU 模式 (无 GPU，使用 MangaOCR)"
+echo "  [4] CPU + PaddleOCR 模式 (推荐低配服务器)"
+read -p "请输入选项 [1/2/3/4] (默认 2): " GPU_CHOICE
 GPU_CHOICE=${GPU_CHOICE:-2}
 
 if [ "$OCR_CHOICE" = "1" ]; then
@@ -26,14 +27,23 @@ if [ "$GPU_CHOICE" = "1" ]; then
     REQUIREMENTS_FILE="requirements-cu128.txt"
     TORCH_VERSION="torch==2.7.1+cu128 torchvision==0.22.1+cu128"
     TORCH_INDEX_URL="https://download.pytorch.org/whl/cu128"
+    export MOEGAL_USE_GPU=1
 elif [ "$GPU_CHOICE" = "3" ]; then
     REQUIREMENTS_FILE="requirements-cpu.txt"
     TORCH_VERSION="torch==2.7.1+cpu torchvision==0.22.1+cpu"
     TORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
+    export MOEGAL_USE_GPU=0
+elif [ "$GPU_CHOICE" = "4" ]; then
+    REQUIREMENTS_FILE="requirements-cpu-paddle.txt"
+    TORCH_VERSION="torch==2.7.1+cpu torchvision==0.22.1+cpu"
+    TORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
+    export MOEGAL_USE_GPU=0
+    export OCR_ENGINE=paddle_ocr
 else
     REQUIREMENTS_FILE="requirements-cu126.txt"
     TORCH_VERSION="torch==2.7.1+cu126 torchvision==0.22.1+cu126"
     TORCH_INDEX_URL="https://download.pytorch.org/whl/cu126"
+    export MOEGAL_USE_GPU=1
 fi
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"

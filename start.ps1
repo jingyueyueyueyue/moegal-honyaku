@@ -11,8 +11,9 @@ Write-Host ''
 Write-Host '请选择运行模式：'
 Write-Host '  [1] RTX 50系列 (CUDA 12.8)'
 Write-Host '  [2] 其他显卡 (CUDA 12.6)'
-Write-Host '  [3] CPU 模式 (无 GPU)'
-$GPU_CHOICE = Read-Host '请输入选项 [1/2/3] (默认 2)'
+Write-Host '  [3] CPU 模式 (无 GPU，使用 MangaOCR)'
+Write-Host '  [4] CPU + PaddleOCR 模式 (推荐低配服务器)'
+$GPU_CHOICE = Read-Host '请输入选项 [1/2/3/4] (默认 2)'
 if ([string]::IsNullOrWhiteSpace($GPU_CHOICE)) { $GPU_CHOICE = '2' }
 
 if ($OCR_CHOICE -eq '1') {
@@ -27,14 +28,23 @@ if ($GPU_CHOICE -eq '1') {
     $REQUIREMENTS_FILE = 'requirements-cu128.txt'
     $TORCH_VERSION = 'torch==2.7.1+cu128 torchvision==0.22.1+cu128'
     $TORCH_INDEX_URL = 'https://download.pytorch.org/whl/cu128'
+    $env:MOEGAL_USE_GPU = '1'
 } elseif ($GPU_CHOICE -eq '3') {
     $REQUIREMENTS_FILE = 'requirements-cpu.txt'
     $TORCH_VERSION = 'torch==2.7.1+cpu torchvision==0.22.1+cpu'
     $TORCH_INDEX_URL = 'https://download.pytorch.org/whl/cpu'
+    $env:MOEGAL_USE_GPU = '0'
+} elseif ($GPU_CHOICE -eq '4') {
+    $REQUIREMENTS_FILE = 'requirements-cpu-paddle.txt'
+    $TORCH_VERSION = 'torch==2.7.1+cpu torchvision==0.22.1+cpu'
+    $TORCH_INDEX_URL = 'https://download.pytorch.org/whl/cpu'
+    $env:MOEGAL_USE_GPU = '0'
+    $env:OCR_ENGINE = 'paddle_ocr'
 } else {
     $REQUIREMENTS_FILE = 'requirements-cu126.txt'
     $TORCH_VERSION = 'torch==2.7.1+cu126 torchvision==0.22.1+cu126'
     $TORCH_INDEX_URL = 'https://download.pytorch.org/whl/cu126'
+    $env:MOEGAL_USE_GPU = '1'
 }
 
 $ROOT_DIR = $PSScriptRoot
