@@ -2,64 +2,43 @@
 自动同步 .env.example 到 .env 的工具
 
 功能：
-- 将 .env.example 中的新配置项添加到 .env
-- 保留 .env 中已有的值
-- 保留 .env.example 中的注释
-- 不删除 .env 中多余的配置项
+- 将 .env.example 的完整格式同步到 .env
+- 保留 .env 中已有的配置值
+- 新配置项使用 .env.example 的默认值
+- 同步后 .env 格式与 .env.example 一致
 """
+import os
 import re
 from pathlib import Path
 
 
-def parse_env_with_comments(file_path: Path) -> list:
-    """
-    解析 env 文件，保留注释和结构
-    
-    Returns:
-        list of dict: [{"type": "comment/blank/config", "line": "...", "key": "...", "value": "..."}]
-    """
+def parse_env_file(file_path: Path) -> dict:
+    """解析 env 文件，返回 {key: value} 字典"""
     if not file_path.exists():
-        return []
+        return {}
     
-    result = []
+    result = {}
     with open(file_path, 'r', encoding='utf-8') as f:
         for line in f:
-            stripped = line.rstrip('\n\r')
-            
-            # 空行
-            if not stripped.strip():
-                result.append({"type": "blank", "line": stripped})
+            stripped = line.strip()
+            # 跳过注释和空行
+            if not stripped or stripped.startswith('#'):
                 continue
-            
-            # 注释行
-            if stripped.strip().startswith('#'):
-                result.append({"type": "comment", "line": stripped})
-                continue
-            
-            # 配置行 KEY=VALUE
+            # 解析 KEY=VALUE
             if '=' in stripped:
                 key, _, value = stripped.partition('=')
                 key = key.strip()
-                result.append({
-                    "type": "config",
-                    "line": stripped,
-                    "key": key,
-                    "value": value
-                })
-            else:
-                result.append({"type": "unknown", "line": stripped})
+                result[key] = value
     
     return result
-
-
-def get_config_keys(parsed: list) -> set:
-    """从解析结果中提取所有配置项的 key"""
-    return {item["key"] for item in parsed if item["type"] == "config"}
 
 
 def sync_env_files(project_root: Path = None):
     """
     同步 .env.example 到 .env
+    
+    同步后的 .env 会保持与 .env.example 相同的格式，
+    同时保留 .env 中已有的配置值。
     
     Args:
         project_root: 项目根目录，默认为当前文件的上上级目录
@@ -74,54 +53,63 @@ def sync_env_files(project_root: Path = None):
         print("[env_sync] .env.example 不存在，跳过同步")
         return
     
-    # 解析两个文件
-    example_parsed = parse_env_with_comments(env_example_path)
-    env_parsed = parse_env_with_comments(env_path)
+    # 解析已有的配置值
+    existing_values = parse_env_file(env_path)
     
-    # 获取配置项 key
-    example_keys = get_config_keys(example_parsed)
-    env_keys = get_config_keys(env_parsed)
+    # 读取 .env.example 内容
+    with open(env_example_path, 'r', encoding='utf-8') as f:
+        example_content = f.read()
     
-    # 找出新配置项
-    new_keys = example_keys - env_keys
+    # 统计变化
+    new_keys = []
+    updated_keys = []
     
-    if not new_keys:
-        print("[env_sync] .env 已是最新，无需同步")
-        return
-    
-    print(f"[env_sync] 发现 {len(new_keys)} 个新配置项，正在同步...")
-    
-    # 收集新配置项（包含其前面的注释）
-    additions = []
-    for i, item in enumerate(example_parsed):
-        if item["type"] == "config" and item["key"] in new_keys:
-            # 向前查找相关的注释行
-            comments = []
-            for j in range(i - 1, -1, -1):
-                prev = example_parsed[j]
-                if prev["type"] in ("comment", "blank"):
-                    if prev["type"] == "comment":
-                        comments.insert(0, prev["line"])
-                else:
-                    break
+    # 生成新的 .env 内容
+    new_lines = []
+    for line in example_content.splitlines():
+        stripped = line.strip()
+        
+        # 注释和空行直接保留
+        if not stripped or stripped.startswith('#'):
+            new_lines.append(line)
+            continue
+        
+        # 解析配置项
+        if '=' in stripped:
+            key, _, default_value = stripped.partition('=')
+            key = key.strip()
+            default_value = default_value.strip()
             
-            # 添加注释和配置项
-            if comments:
-                for comment in comments:
-                    additions.append(comment)
-            additions.append(item["line"])
-            print(f"  + {item['key']}={item['value']}")
+            # 如果已有配置，使用已有值
+            if key in existing_values:
+                existing_value = existing_values[key]
+                if existing_value != default_value:
+                    new_lines.append(f"{key}={existing_value}")
+                    updated_keys.append(key)
+                else:
+                    new_lines.append(line)
+            else:
+                # 新配置项，使用默认值
+                new_lines.append(line)
+                new_keys.append(key)
+        else:
+            new_lines.append(line)
     
-    # 追加到 .env 文件
-    with open(env_path, 'a', encoding='utf-8') as f:
-        # 确保前面有空行
-        if env_parsed and env_parsed[-1].get("type") != "blank":
+    # 写入 .env
+    with open(env_path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(new_lines))
+        if not example_content.endswith('\n'):
             f.write('\n')
-        f.write('\n')
-        for addition in additions:
-            f.write(addition + '\n')
     
-    print(f"[env_sync] 同步完成，已添加 {len(new_keys)} 个配置项")
+    # 输出同步结果
+    if new_keys or updated_keys:
+        print(f"[env_sync] 同步完成")
+        if new_keys:
+            print(f"  新增配置项: {', '.join(new_keys)}")
+        if updated_keys:
+            print(f"  保留自定义值: {', '.join(updated_keys)}")
+    else:
+        print("[env_sync] .env 已是最新，无需更新")
 
 
 if __name__ == '__main__':
