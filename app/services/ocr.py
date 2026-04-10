@@ -464,65 +464,50 @@ def detect_text_regions(image_cv):
     return filtered_bboxes
 
 
-# ============ 多模态 OCR 配置（仅当 ocr_engine=vision 时生效）============
-# 多模态 API 供应商：openai 或 dashscope
-VISION_OCR_PROVIDER = os.getenv("VISION_OCR_PROVIDER", "openai").lower()
-
-# ===== OpenAI 兼容 API 配置 =====
-# 优先使用独立配置，未配置则回退到翻译服务的 OpenAI 配置
-VISION_OPENAI_API_KEY = os.getenv("VISION_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-VISION_OPENAI_BASE_URL = os.getenv("VISION_OPENAI_BASE_URL") or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-VISION_OCR_MODEL = os.getenv("VISION_OCR_MODEL") or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-
-# ===== DashScope API 配置 =====
-# 优先使用独立配置，未配置则回退到翻译服务的 DashScope 配置
-VISION_DASHSCOPE_API_KEY = os.getenv("VISION_DASHSCOPE_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
-VISION_DASHSCOPE_BASE_URL = os.getenv("VISION_DASHSCOPE_BASE_URL") or os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-VISION_DASHSCOPE_MODEL = os.getenv("VISION_DASHSCOPE_MODEL") or os.getenv("DASHSCOPE_MODEL", "qwen-vl-plus")
-
-# OCR 提示词：要求模型仅输出识别的文字，不翻译、不解释
+# ============ 多模态 OCR 提示词 ============
 VISION_OCR_PROMPT = os.getenv(
     "VISION_OCR_PROMPT",
     "请识别这张图片中的所有文字，只输出识别到的文字内容，不要添加任何解释、翻译或格式化。"
     "如果有多行文字，用换行符分隔。如果没有文字，返回空字符串。"
 )
 
-_VISION_CLIENT = None
+# Vision OCR 客户端缓存
+_VISION_CLIENT_CACHE = {}
 
 
-def _get_vision_client():
-    """获取多模态 API 客户端（懒加载）"""
-    global _VISION_CLIENT
-    if _VISION_CLIENT is not None:
-        return _VISION_CLIENT
+def _get_vision_client_and_model():
+    """
+    获取多模态 API 客户端和模型（从 custom_conf 动态读取）
     
-    if VISION_OCR_PROVIDER == "openai":
-        api_key = VISION_OPENAI_API_KEY
-        base_url = VISION_OPENAI_BASE_URL
-        model = VISION_OCR_MODEL
+    Returns:
+        (client, model)
+    """
+    from app.core.custom_conf import custom_conf
+    
+    provider = custom_conf.vision_ocr_provider
+    
+    if provider == "openai":
+        api_key = custom_conf.vision_openai_api_key
+        base_url = custom_conf.vision_openai_base_url
+        model = custom_conf.vision_openai_model
         if not api_key:
-            raise RuntimeError("VISION_OCR_PROVIDER=openai 但 VISION_OPENAI_API_KEY 和 OPENAI_API_KEY 均未配置")
-    elif VISION_OCR_PROVIDER == "dashscope":
-        api_key = VISION_DASHSCOPE_API_KEY
-        base_url = VISION_DASHSCOPE_BASE_URL
-        model = VISION_DASHSCOPE_MODEL
+            raise RuntimeError("Vision OCR Provider=openai 但 API Key 未配置，请通过 /conf/batch-update 设置 vision_openai_api_key")
+    elif provider == "dashscope":
+        api_key = custom_conf.vision_dashscope_api_key
+        base_url = custom_conf.vision_dashscope_base_url
+        model = custom_conf.vision_dashscope_model
         if not api_key:
-            raise RuntimeError("VISION_OCR_PROVIDER=dashscope 但 VISION_DASHSCOPE_API_KEY 和 DASHSCOPE_API_KEY 均未配置")
+            raise RuntimeError("Vision OCR Provider=dashscope 但 API Key 未配置，请通过 /conf/batch-update 设置 vision_dashscope_api_key")
     else:
-        raise RuntimeError(f"不支持的 VISION_OCR_PROVIDER: {VISION_OCR_PROVIDER}")
+        raise RuntimeError(f"不支持的 vision_ocr_provider: {provider}")
     
-    _VISION_CLIENT = OpenAI(api_key=api_key, base_url=base_url)
-    logger.info(f"多模态 OCR 客户端初始化成功: provider={VISION_OCR_PROVIDER}, base_url={base_url}, model={model}")
-    return _VISION_CLIENT
-
-
-def _get_vision_model() -> str:
-    """获取当前配置的多模态模型名称"""
-    if VISION_OCR_PROVIDER == "openai":
-        return VISION_OCR_MODEL
-    elif VISION_OCR_PROVIDER == "dashscope":
-        return VISION_DASHSCOPE_MODEL
-    return "gpt-4o-mini"
+    # 缓存客户端
+    cache_key = f"{provider}:{api_key}:{base_url}"
+    if cache_key not in _VISION_CLIENT_CACHE:
+        _VISION_CLIENT_CACHE[cache_key] = OpenAI(api_key=api_key, base_url=base_url)
+        logger.info(f"Vision OCR 客户端初始化: provider={provider}, base_url={base_url}, model={model}")
+    
+    return _VISION_CLIENT_CACHE[cache_key], model
 
 
 def vision_ocr_recognize(image_pil) -> str:
@@ -535,8 +520,7 @@ def vision_ocr_recognize(image_pil) -> str:
     Returns:
         识别出的文本
     """
-    client = _get_vision_client()
-    model = _get_vision_model()
+    client, model = _get_vision_client_and_model()
     
     # 将 PIL Image 转为 base64
     buffer = io.BytesIO()

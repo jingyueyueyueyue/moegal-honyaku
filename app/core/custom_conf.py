@@ -40,6 +40,26 @@ class CustomConf:
         self.auto_save_image = auto_save_image if auto_save_image is not None else _AUTO_SAVE_IMAGE
         # AI断句默认值由环境变量 AI_LINEBREAK_ENABLED 决定
         self.enable_ai_linebreak = enable_ai_linebreak if enable_ai_linebreak is not None else _ENABLE_AI_LINEBREAK
+        
+        # ============ 动态翻译配置（运行时可由前端设置）============
+        # OpenAI 配置
+        self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+        self.openai_base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        
+        # DashScope 配置
+        self.dashscope_api_key = os.getenv("DASHSCOPE_API_KEY", "")
+        self.dashscope_base_url = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        self.dashscope_model = os.getenv("DASHSCOPE_MODEL", "qwen3-max")
+        
+        # ============ 动态 OCR Vision 配置（运行时可由前端设置）============
+        self.vision_ocr_provider = os.getenv("VISION_OCR_PROVIDER", "openai").lower()
+        self.vision_openai_api_key = os.getenv("VISION_OPENAI_API_KEY", "") or os.getenv("OPENAI_API_KEY", "")
+        self.vision_openai_base_url = os.getenv("VISION_OPENAI_BASE_URL", "") or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        self.vision_openai_model = os.getenv("VISION_OCR_MODEL", "") or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        self.vision_dashscope_api_key = os.getenv("VISION_DASHSCOPE_API_KEY", "") or os.getenv("DASHSCOPE_API_KEY", "")
+        self.vision_dashscope_base_url = os.getenv("VISION_DASHSCOPE_BASE_URL", "") or os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        self.vision_dashscope_model = os.getenv("VISION_DASHSCOPE_MODEL", "") or os.getenv("DASHSCOPE_MODEL", "qwen-vl-plus")
 
     def update_conf(self, attr, v):
         assert hasattr(self, attr), f"attr '{attr}' is not exists."
@@ -59,6 +79,10 @@ class CustomConf:
             v = v if isinstance(v, bool) else str(v).lower() in ("true", "1", "yes")
         if attr == "enable_ai_linebreak":
             v = v if isinstance(v, bool) else str(v).lower() in ("true", "1", "yes")
+        if attr == "vision_ocr_provider":
+            assert v in ("openai", "dashscope"), (
+                f"vision_ocr_provider 必须是 openai 或 dashscope"
+            )
         setattr(self, attr, v)
         logger.info(f"将 {attr} 设置为 {v}")
         return {

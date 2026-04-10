@@ -108,27 +108,51 @@ def with_retry(
     return decorator
 
 
-# DashScope OpenAI 兼容接口配置，可通过 .env 覆盖默认值。
-DASHSCOPE_BASE_URL = os.getenv(
-    "DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
-)
-DASHSCOPE_MODEL = os.getenv("DASHSCOPE_MODEL", "qwen3-max")
-DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
+# ============ 客户端缓存 ============
+_CLIENT_CACHE = {}
 
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai-proxy.org/v1")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+def _get_client(api_type: str, api_key: str, base_url: str) -> AsyncOpenAI:
+    """获取或创建 OpenAI 客户端（带缓存）"""
+    cache_key = f"{api_type}:{api_key}:{base_url}"
+    if cache_key not in _CLIENT_CACHE:
+        _CLIENT_CACHE[cache_key] = AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+        )
+    return _CLIENT_CACHE[cache_key]
 
-# 复用单个异步客户端，避免重复建立连接。
-ALI_CLIENT = AsyncOpenAI(
-    api_key=DASHSCOPE_API_KEY,
-    base_url=DASHSCOPE_BASE_URL,
-)
 
-OPENAI_CLIENT = AsyncOpenAI(
-    api_key=OPENAI_API_KEY,
-    base_url=OPENAI_BASE_URL,
-)
+def _provider_options(api_type: str):
+    """
+    获取翻译 API 配置（从 custom_conf 动态读取）
+    
+    Args:
+        api_type: "dashscope" 或 "openai"
+        
+    Returns:
+        (client, model, extra_kwargs)
+    """
+    from app.core.custom_conf import custom_conf
+    
+    if api_type == "dashscope":
+        api_key = custom_conf.dashscope_api_key
+        base_url = custom_conf.dashscope_base_url
+        model = custom_conf.dashscope_model
+        if not api_key:
+            raise RuntimeError("DashScope API Key 未配置，请通过 /conf/batch-update 设置 dashscope_api_key")
+        client = _get_client("dashscope", api_key, base_url)
+        return client, model, {"extra_body": {"enable_thinking": False}}
+    
+    if api_type == "openai":
+        api_key = custom_conf.openai_api_key
+        base_url = custom_conf.openai_base_url
+        model = custom_conf.openai_model
+        if not api_key:
+            raise RuntimeError("OpenAI API Key 未配置，请通过 /conf/batch-update 设置 openai_api_key")
+        client = _get_client("openai", api_key, base_url)
+        return client, model, {}
+    
+    raise RuntimeError(f"不支持的 translate_api_type: {api_type}")
 
 
 def _normalize_content(content) -> str:
@@ -146,18 +170,6 @@ def _normalize_content(content) -> str:
                 parts.append(str(item))
         return "".join(parts).strip()
     return str(content or "").strip()
-
-
-def _provider_options(api_type: str):
-    if api_type == "dashscope":
-        if not DASHSCOPE_API_KEY:
-            raise RuntimeError("DASHSCOPE_API_KEY 未配置")
-        return ALI_CLIENT, DASHSCOPE_MODEL, {"extra_body": {"enable_thinking": False}}
-    if api_type == "openai":
-        if not OPENAI_API_KEY:
-            raise RuntimeError("OPENAI_API_KEY 未配置")
-        return OPENAI_CLIENT, OPENAI_MODEL, {}
-    raise RuntimeError(f"不支持的 translate_api_type: {api_type}")
 
 
 def _extract_json_payload(raw: str):
