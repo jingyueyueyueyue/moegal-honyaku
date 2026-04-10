@@ -16,6 +16,10 @@ async def lifespan(_: FastAPI):
 
 def create_app() -> FastAPI:
     from app.api.routes import register_routers
+    from app.core.env_sync import sync_env_files
+    
+    # 启动时同步 .env.example 到 .env
+    sync_env_files()
 
     application = FastAPI(lifespan=lifespan)
     application.add_middleware(
