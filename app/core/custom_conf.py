@@ -40,26 +40,32 @@ class CustomConf:
         # OCR 引擎默认值由环境变量 MOEGAL_OCR_ENGINE 决定
         self.ocr_engine = ocr_engine if ocr_engine else _DEFAULT_OCR_ENGINE
         self.auto_save_image = auto_save_image if auto_save_image is not None else _AUTO_SAVE_IMAGE
-        # AI断句配置
+        
+        # ============ AI断句配置（运行时可由前端设置）============
+        # 是否启用AI智能断句（复用翻译模型，无需单独配置模型）
         self.enable_ai_linebreak = enable_ai_linebreak if enable_ai_linebreak is not None else _ENABLE_AI_LINEBREAK
+        # 触发断句的最小文本长度（短于此长度不处理）
         self.ai_linebreak_min_length = _AI_LINEBREAK_MIN_LENGTH
         
         # ============ 动态翻译配置（运行时可由前端设置）============
-        # OpenAI 配置
-        self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
-        self.openai_base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        # OpenAI 翻译服务配置
+        self.openai_api_key = os.getenv("OPENAI_API_KEY", "")  # API密钥
+        self.openai_base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")  # API地址
+        self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")  # 模型名称
         
-        # DashScope 配置
-        self.dashscope_api_key = os.getenv("DASHSCOPE_API_KEY", "")
-        self.dashscope_base_url = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        self.dashscope_model = os.getenv("DASHSCOPE_MODEL", "qwen3-max")
+        # DashScope（阿里云）翻译服务配置
+        self.dashscope_api_key = os.getenv("DASHSCOPE_API_KEY", "")  # API密钥
+        self.dashscope_base_url = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")  # API地址
+        self.dashscope_model = os.getenv("DASHSCOPE_MODEL", "qwen3-max")  # 模型名称
         
         # ============ 动态 OCR Vision 配置（运行时可由前端设置）============
+        # 多模态OCR供应商：openai 或 dashscope
         self.vision_ocr_provider = os.getenv("VISION_OCR_PROVIDER", "openai").lower()
+        # OpenAI Vision OCR 配置（未配置时回退到翻译服务的OpenAI配置）
         self.vision_openai_api_key = os.getenv("VISION_OPENAI_API_KEY", "") or os.getenv("OPENAI_API_KEY", "")
         self.vision_openai_base_url = os.getenv("VISION_OPENAI_BASE_URL", "") or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
         self.vision_openai_model = os.getenv("VISION_OCR_MODEL", "") or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        # DashScope Vision OCR 配置（未配置时回退到翻译服务的DashScope配置）
         self.vision_dashscope_api_key = os.getenv("VISION_DASHSCOPE_API_KEY", "") or os.getenv("DASHSCOPE_API_KEY", "")
         self.vision_dashscope_base_url = os.getenv("VISION_DASHSCOPE_BASE_URL", "") or os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
         self.vision_dashscope_model = os.getenv("VISION_DASHSCOPE_MODEL", "") or os.getenv("DASHSCOPE_MODEL", "qwen-vl-plus")
