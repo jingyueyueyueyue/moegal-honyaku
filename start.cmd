@@ -84,8 +84,8 @@ echo 正在安装 Python 3.12...
 "%UV_BIN%" python install 3.12 --no-bin
 
 echo 正在创建虚拟环境...
-if not exist "%ROOT_DIR%.venv" (
-    "%UV_BIN%" venv
+if not exist "%VENV_PYTHON%" (
+    "%UV_BIN%" venv --python 3.12
 )
 
 echo 正在安装 PyTorch...
