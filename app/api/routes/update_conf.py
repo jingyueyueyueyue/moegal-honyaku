@@ -20,7 +20,9 @@ class BatchUpdateItem(BaseModel):
     translate_mode: Optional[str] = None
     ocr_engine: Optional[str] = None
     auto_save_image: Optional[bool] = None
+    # AI 断句配置
     enable_ai_linebreak: Optional[bool] = None
+    ai_linebreak_min_length: Optional[int] = None
     # OpenAI 翻译配置
     openai_api_key: Optional[str] = None
     openai_base_url: Optional[str] = None

@@ -17,6 +17,8 @@ _AUTO_SAVE_IMAGE = os.getenv("AUTO_SAVE_IMAGE", "false").lower() in ("true", "1"
 
 # 从环境变量读取是否启用AI智能断句（默认启用）
 _ENABLE_AI_LINEBREAK = os.getenv("AI_LINEBREAK_ENABLED", "true").lower() in ("true", "1", "yes")
+# AI断句最小文本长度（默认50字符）
+_AI_LINEBREAK_MIN_LENGTH = int(os.getenv("AI_LINEBREAK_MIN_LENGTH", "50"))
 
 
 class CustomConf:
@@ -38,8 +40,9 @@ class CustomConf:
         # OCR 引擎默认值由环境变量 MOEGAL_OCR_ENGINE 决定
         self.ocr_engine = ocr_engine if ocr_engine else _DEFAULT_OCR_ENGINE
         self.auto_save_image = auto_save_image if auto_save_image is not None else _AUTO_SAVE_IMAGE
-        # AI断句默认值由环境变量 AI_LINEBREAK_ENABLED 决定
+        # AI断句配置
         self.enable_ai_linebreak = enable_ai_linebreak if enable_ai_linebreak is not None else _ENABLE_AI_LINEBREAK
+        self.ai_linebreak_min_length = _AI_LINEBREAK_MIN_LENGTH
         
         # ============ 动态翻译配置（运行时可由前端设置）============
         # OpenAI 配置

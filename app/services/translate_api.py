@@ -23,14 +23,6 @@ RETRY_MAX_DELAY = float(os.getenv("RETRY_MAX_DELAY", "30.0"))
 # 重试抖动因子（0-1，默认0.1，避免惊群效应）
 RETRY_JITTER = float(os.getenv("RETRY_JITTER", "0.1"))
 
-# ============ AI 断句配置 ============
-# 是否启用AI智能断句（默认启用）
-AI_LINEBREAK_ENABLED = os.getenv("AI_LINEBREAK_ENABLED", "true").lower() in ("true", "1", "yes")
-# AI断句最大文本长度（超过此长度才触发断句，默认50字符）
-AI_LINEBREAK_MIN_LENGTH = int(os.getenv("AI_LINEBREAK_MIN_LENGTH", "50"))
-# 断句模型（默认复用翻译模型）
-AI_LINEBREAK_MODEL = os.getenv("AI_LINEBREAK_MODEL")  # None表示复用翻译模型
-
 # ============ 翻译提示词配置（可通过 .env 自定义）============
 # 默认提示词：统一翻译风格，仅输出翻译内容，不附加解释
 _DEFAULT_TRANSLATE_PROMPT = "将句子翻译成中文（如果是符号就直接输出，不要加任何解释、注解或括号内容，仅保留自然对话或原声风格的翻译。）"
@@ -273,25 +265,23 @@ async def translate_req(all_text, api_type: str = "dashscope", translate_mode: s
 
 # ============ AI 智能断句功能 ============
 @with_retry(max_attempts=2)  # 断句失败影响较小，减少重试次数
-async def _ai_linebreak_single(text: str, api_type: str) -> str:
+async def _ai_linebreak_single(text: str, api_type: str, min_length: int) -> str:
     """
     对单个翻译结果进行AI智能断句
     
     Args:
         text: 待断句的翻译文本
         api_type: API类型
+        min_length: 最小文本长度，短于此长度不处理
         
     Returns:
         断句后的文本
     """
-    if not text or len(text) < AI_LINEBREAK_MIN_LENGTH:
+    if not text or len(text) < min_length:
         return text
     
+    # 复用翻译模型进行断句
     client, model, extra_kwargs = _provider_options(api_type)
-    
-    # 如果配置了专用断句模型，使用它
-    if AI_LINEBREAK_MODEL:
-        model = AI_LINEBREAK_MODEL
     
     res = await client.chat.completions.create(
         model=model,
@@ -317,13 +307,18 @@ async def ai_linebreak_batch(texts: list[str], api_type: str = "dashscope") -> l
     Returns:
         断句后的文本列表
     """
-    if not AI_LINEBREAK_ENABLED:
+    from app.core.custom_conf import custom_conf
+    
+    # 从 custom_conf 读取配置
+    if not custom_conf.enable_ai_linebreak:
         return texts
+    
+    min_length = custom_conf.ai_linebreak_min_length
     
     results = []
     for text in texts:
         try:
-            result = await _ai_linebreak_single(text, api_type)
+            result = await _ai_linebreak_single(text, api_type, min_length)
             results.append(result)
         except Exception as e:
             # 断句失败不影响主流程，返回原文
@@ -355,11 +350,13 @@ async def translate_with_linebreak(
     Returns:
         (翻译结果列表, 费用)
     """
+    from app.core.custom_conf import custom_conf
+    
     # 1. 执行翻译
     translated, cost = await translate_req(all_text, api_type, translate_mode)
     
-    # 2. AI断句（如果启用）
-    if enable_linebreak and AI_LINEBREAK_ENABLED:
+    # 2. AI断句（如果启用且全局配置开启）
+    if enable_linebreak and custom_conf.enable_ai_linebreak:
         translated = await ai_linebreak_batch(translated, api_type)
     
     return translated, cost
