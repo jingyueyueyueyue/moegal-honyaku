@@ -99,6 +99,11 @@ else
     "$UV_BIN" python install 3.12 --no-bin
 fi
 
+echo "正在创建虚拟环境..."
+if [ ! -f "$VENV_PYTHON" ]; then
+    "$UV_BIN" venv --python 3.12
+fi
+
 echo "正在安装 PyTorch..."
 "$UV_BIN" pip install $TORCH_VERSION --extra-index-url $TORCH_INDEX_URL
 
@@ -106,4 +111,5 @@ echo "正在安装其他依赖..."
 "$UV_BIN" pip install -r "$REQUIREMENTS_FILE" --index-strategy unsafe-best-match
 
 echo "启动服务..."
-"$VENV_PYTHON" -m uvicorn main:app --host 0.0.0.0 --port 8000
+SERVER_PORT=${SERVER_PORT:-8000}
+"$VENV_PYTHON" -m uvicorn main:app --host 0.0.0.0 --port $SERVER_PORT

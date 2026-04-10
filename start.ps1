@@ -91,6 +91,11 @@ if ($UV_BIN -ne 'uv' -and -not (Test-Path $UV_BIN)) {
 Write-Host 'Installing Python 3.12...'
 & $UV_BIN python install 3.12 --no-bin
 
+Write-Host '正在创建虚拟环境...'
+if (-not (Test-Path $VENV_PYTHON)) {
+    & $UV_BIN venv --python 3.12
+}
+
 Write-Host '正在安装 PyTorch...'
 & $UV_BIN pip install $TORCH_VERSION.Split() --extra-index-url $TORCH_INDEX_URL
 
@@ -98,4 +103,5 @@ Write-Host '正在安装其他依赖...'
 & $UV_BIN pip install -r $REQUIREMENTS_FILE --index-strategy unsafe-best-match
 
 Write-Host '启动服务...'
-& $VENV_PYTHON -m uvicorn main:app --host 0.0.0.0 --port 8000
+if (-not $env:SERVER_PORT) { $env:SERVER_PORT = '8000' }
+& $VENV_PYTHON -m uvicorn main:app --host 0.0.0.0 --port $env:SERVER_PORT

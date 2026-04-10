@@ -52,7 +52,6 @@ set "TOOLS_DIR=%ROOT_DIR%.tools"
 set "UV_HOME=%TOOLS_DIR%\uv\"
 set "VENV_PYTHON=%ROOT_DIR%.venv\Scripts\python.exe"
 
-REM 优先使用全局安装的 uv
 where uv >nul 2>&1
 if %errorlevel%==0 (
     set "UV_BIN=uv"
@@ -95,5 +94,6 @@ echo 正在安装其他依赖...
 "%UV_BIN%" pip install -r "%REQUIREMENTS_FILE%" --index-strategy unsafe-best-match
 
 echo 启动服务...
-"%VENV_PYTHON%" -m uvicorn main:app --host 0.0.0.0 --port 8000
+if not defined SERVER_PORT set "SERVER_PORT=8000"
+"%VENV_PYTHON%" -m uvicorn main:app --host 0.0.0.0 --port %SERVER_PORT%
 pause

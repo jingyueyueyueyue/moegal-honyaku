@@ -94,5 +94,6 @@ echo Installing dependencies...
 "%UV_BIN%" pip install -r "%REQUIREMENTS_FILE%" --index-strategy unsafe-best-match
 
 echo Starting server...
-"%VENV_PYTHON%" -m uvicorn main:app --host 0.0.0.0 --port 8000
+if not defined SERVER_PORT set "SERVER_PORT=8000"
+"%VENV_PYTHON%" -m uvicorn main:app --host 0.0.0.0 --port %SERVER_PORT%
 pause
