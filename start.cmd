@@ -83,6 +83,11 @@ if not "%UV_BIN%"=="uv" if not exist "%UV_BIN%" (
 echo 正在安装 Python 3.12...
 "%UV_BIN%" python install 3.12 --no-bin
 
+echo 正在创建虚拟环境...
+if not exist "%ROOT_DIR%.venv" (
+    "%UV_BIN%" venv
+)
+
 echo 正在安装 PyTorch...
 "%UV_BIN%" pip install %TORCH_VERSION% --extra-index-url %TORCH_INDEX_URL%
 
