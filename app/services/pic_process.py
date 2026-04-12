@@ -231,10 +231,24 @@ async def get_text_masked_pic(image_pil, image_cv, bboxes, inpaint=True, ocr_eng
     return all_text, image_cv
 
 
+def _normalize_newlines(text: str) -> str:
+    """
+    将字面量换行符转换为真正的换行符
+    处理 AI 返回的文本中 "\\n" 字面量
+    """
+    if not text:
+        return text
+    # 将字面量 \n (两个字符) 转换为真正的换行符
+    return text.replace('\\n', '\n')
+
+
 def wrap_text_by_width(draw, text, font, max_width):
     """
     将文字根据实际像素宽度换行，返回行列表（横排模式）
     """
+    # 先处理字面量换行符
+    text = _normalize_newlines(text)
+    
     lines = []
     line = ''
     for char in text:
@@ -263,6 +277,9 @@ def wrap_text_vertical(text, font, max_height):
     竖排：从右到左，每列从上到下
     返回的列表中，索引0是最先读到的文字（应画在最右边）
     """
+    # 先处理字面量换行符
+    text = _normalize_newlines(text)
+    
     columns = []
     col = ''
     col_height = 0

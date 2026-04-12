@@ -45,6 +45,42 @@ AI_LINEBREAK_PROMPT = os.getenv(
     "只输出断句后的文本，不要解释。"
 )
 
+# 上下文感知翻译提示词
+_CONTEXT_TRANSLATE_SYSTEM_PROMPT = os.getenv(
+    "CONTEXT_TRANSLATE_SYSTEM_PROMPT",
+    "你是一个专业的漫画翻译助手。你会收到一个JSON数组，包含漫画一页中所有气泡的文本。"
+    "请进行翻译，注意：\n"
+    "1. 结合上下文理解代词指代（他/她/它）和省略句\n"
+    "2. 保持角色称呼和专有名词的一致性\n"
+    "3. 理解对话语境，保持语气和情感连贯\n"
+    "4. 每个气泡独立翻译，但考虑整体叙事流畅\n"
+    "返回格式：{\"result\": [\"翻译1\", \"翻译2\", ...]}\n"
+    "只输出JSON，不要解释。"
+)
+
+# 累积上下文翻译提示词（用于 context-sequential 模式）
+_SEQUENTIAL_TRANSLATE_SYSTEM_PROMPT = os.getenv(
+    "SEQUENTIAL_TRANSLATE_SYSTEM_PROMPT",
+    "你是一个专业的漫画翻译助手。你会收到之前已翻译的内容和新待翻译的内容。"
+    "请根据上下文连贯性进行翻译，注意：\n"
+    "1. 参考已翻译内容理解代词、角色称呼和术语\n"
+    "2. 保持与之前翻译的风格和术语一致性\n"
+    "3. 理解对话的连续性和语境\n"
+    "输入格式：{\"previous\": [\"已翻译1\", ...], \"current\": [\"待翻译1\", ...]}\n"
+    "返回格式：{\"result\": [\"翻译1\", \"翻译2\", ...]}\n"
+    "只输出JSON，不要解释。"
+)
+
+# 批量上下文翻译提示词（用于 context-batch 模式）
+_BATCH_TRANSLATE_SYSTEM_PROMPT = os.getenv(
+    "BATCH_TRANSLATE_SYSTEM_PROMPT",
+    "你是漫画翻译助手。输入是JSON格式的多页文本：{\"pages\": [[...], [...]]}。\n"
+    "翻译规则：保持角色称呼和术语一致，理解上下文。\n"
+    "输出格式示例（假设2页，每页2个气泡）：\n"
+    "{\"result\": [[\"第一页第一个\", \"第一页第二个\"], [\"第二页第一个\", \"第二页第二个\"]]}\n"
+    "严格输出JSON，不要任何额外文字。"
+)
+
 
 # ============ 重试机制实现 ============
 T = TypeVar('T')
@@ -185,9 +221,59 @@ def _extract_json_payload(raw: str):
     for candidate in candidates:
         try:
             return json.loads(candidate)
+        except json.JSONDecodeError:
+            # 尝试修复不完整的 JSON（模型输出被截断）
+            fixed = _try_fix_incomplete_json(candidate)
+            if fixed:
+                try:
+                    return json.loads(fixed)
+                except:
+                    pass
         except Exception:
             continue
-    raise RuntimeError("结构化输出解析失败，模型返回非 JSON")
+    # 提取失败，显示原始内容前300字符帮助调试
+    preview = text[:300] + ("..." if len(text) > 300 else "")
+    raise RuntimeError(f"结构化输出解析失败，模型返回非 JSON。原始内容: {preview}")
+
+
+def _try_fix_incomplete_json(text: str) -> str | None:
+    """尝试修复被截断的 JSON"""
+    text = text.strip()
+    if not text:
+        return None
+    
+    # 统计括号数量
+    open_braces = text.count('{') - text.count('}')
+    open_brackets = text.count('[') - text.count(']')
+    
+    if open_braces <= 0 and open_brackets <= 0:
+        return text  # 括号已匹配，不需要修复
+    
+    # 查找最后一个完整的字符串（闭合引号）
+    last_complete = -1
+    quote_positions = []
+    in_escape = False
+    for i, c in enumerate(text):
+        if c == '\\' and not in_escape:
+            in_escape = True
+            continue
+        if c == '"' and not in_escape:
+            quote_positions.append(i)
+        in_escape = False
+    
+    if len(quote_positions) >= 2 and len(quote_positions) % 2 == 0:
+        last_complete = quote_positions[-1]
+    
+    if last_complete > 0:
+        truncated = text[:last_complete + 1]
+        # 补全闭合括号
+        open_braces = truncated.count('{') - truncated.count('}')
+        open_brackets = truncated.count('[') - truncated.count(']')
+        truncated += ']' * open_brackets + '}' * open_braces
+        return truncated
+    
+    # 简单地补全括号
+    return text + ']' * open_brackets + '}' * open_braces
 
 
 def _parse_structured_result(raw: str, expected_count: int):
@@ -255,12 +341,182 @@ async def _translate_structured(all_text, api_type: str):
     return _parse_structured_result(raw, len(all_text)), 0.0
 
 
+@with_retry()
+async def _translate_context(all_text, api_type: str):
+    """
+    上下文感知翻译（带重试）
+    
+    特点：
+    1. 将所有文本作为整体发送，模型可以理解上下文关系
+    2. 利用上下文理解代词指代、省略句、语气等
+    3. 保持角色称呼和术语的一致性
+    """
+    if not all_text:
+        return [], 0.0
+    
+    client, model, extra_kwargs = _provider_options(api_type)
+    
+    # 构建上下文输入
+    # 格式：带索引的列表，方便模型理解顺序关系
+    context_input = json.dumps(all_text, ensure_ascii=False)
+    
+    res = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": _CONTEXT_TRANSLATE_SYSTEM_PROMPT},
+            {"role": "user", "content": context_input},
+        ],
+        **extra_kwargs,
+    )
+    
+    raw = _normalize_content(res.choices[0].message.content)
+    return _parse_structured_result(raw, len(all_text)), 0.0
+
+
 async def translate_req(all_text, api_type: str = "dashscope", translate_mode: str = "parallel"):
     if translate_mode == "parallel":
         return await _translate_parallel(all_text, api_type)
     if translate_mode == "structured":
         return await _translate_structured(all_text, api_type)
+    if translate_mode == "context":
+        return await _translate_context(all_text, api_type)
+    # context-batch 和 context-sequential 需要特殊处理，这里作为 fallback
+    if translate_mode in ("context-batch", "context-sequential"):
+        return await _translate_context(all_text, api_type)
     raise RuntimeError(f"不支持的 translate_mode: {translate_mode}")
+
+
+# ============ 累积上下文翻译（context-sequential）============
+@with_retry()
+async def translate_with_previous_context(
+    current_text: list[str],
+    previous_translations: list[str],
+    api_type: str = "dashscope"
+) -> tuple[list[str], float]:
+    """
+    累积上下文翻译：翻译当前文本时参考之前的翻译结果
+    
+    Args:
+        current_text: 当前待翻译文本列表
+        previous_translations: 之前的翻译结果（作为上下文）
+        api_type: API类型
+        
+    Returns:
+        (翻译结果列表, 费用)
+    """
+    if not current_text:
+        return [], 0.0
+    
+    client, model, extra_kwargs = _provider_options(api_type)
+    
+    # 构建输入
+    payload = json.dumps({
+        "previous": previous_translations[-20:],  # 只保留最近20条，避免上下文过长
+        "current": current_text
+    }, ensure_ascii=False)
+    
+    res = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": _SEQUENTIAL_TRANSLATE_SYSTEM_PROMPT},
+            {"role": "user", "content": payload},
+        ],
+        **extra_kwargs,
+    )
+    
+    raw = _normalize_content(res.choices[0].message.content)
+    return _parse_structured_result(raw, len(current_text)), 0.0
+
+
+# ============ 批量上下文翻译（context-batch）============
+def _parse_batch_result(raw: str, expected_counts: list[int], original_pages: list[list[str]]) -> list[list[str]]:
+    """解析批量翻译结果，允许部分结果"""
+    payload = _extract_json_payload(raw)
+    
+    if isinstance(payload, dict):
+        result = payload.get("result")
+    elif isinstance(payload, list):
+        result = payload
+    else:
+        raise RuntimeError("批量翻译输出格式错误")
+    
+    if not isinstance(result, list):
+        raise RuntimeError("批量翻译输出缺少 result 列表")
+    
+    normalized = []
+    
+    # 如果页数不足，补齐
+    while len(result) < len(expected_counts):
+        result.append([])
+    
+    for i, (page_result, expected_count, original_texts) in enumerate(zip(result, expected_counts, original_pages)):
+        if not isinstance(page_result, list):
+            page_result = []
+        
+        page_translations = [str(item).strip() for item in page_result]
+        
+        # 如果翻译数量不足，用原文填充
+        while len(page_translations) < expected_count:
+            page_translations.append(original_texts[len(page_translations)])
+        
+        # 如果翻译数量过多，截断
+        page_translations = page_translations[:expected_count]
+        
+        normalized.append(page_translations)
+    
+    return normalized
+
+
+@with_retry()
+async def translate_batch_with_context(
+    pages_text: list[list[str]],
+    api_type: str = "dashscope"
+) -> tuple[list[list[str]], float]:
+    """
+    批量上下文翻译：一次性翻译多页漫画的所有文本
+    
+    Args:
+        pages_text: 每页的文本列表，例如 [[页1气泡1, 页1气泡2], [页2气泡1, ...]]
+        api_type: API类型
+        
+    Returns:
+        (每页翻译结果列表, 费用)
+    """
+    if not pages_text:
+        return [], 0.0
+    
+    # 过滤空页
+    non_empty_pages = [(i, texts) for i, texts in enumerate(pages_text) if texts]
+    if not non_empty_pages:
+        return [[] for _ in pages_text], 0.0
+    
+    client, model, extra_kwargs = _provider_options(api_type)
+    
+    # 构建输入
+    payload = json.dumps({
+        "pages": [texts for _, texts in non_empty_pages]
+    }, ensure_ascii=False)
+    
+    res = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": _BATCH_TRANSLATE_SYSTEM_PROMPT},
+            {"role": "user", "content": payload},
+        ],
+        **extra_kwargs,
+    )
+    
+    raw = _normalize_content(res.choices[0].message.content)
+    expected_counts = [len(texts) for _, texts in non_empty_pages]
+    original_pages = [texts for _, texts in non_empty_pages]
+    non_empty_results = _parse_batch_result(raw, expected_counts, original_pages)
+    
+    # 重建完整结果（包含空页）
+    results = [[] for _ in pages_text]
+    for (orig_idx, _), translations in zip(non_empty_pages, non_empty_results):
+        results[orig_idx] = translations
+    
+    return results, 0.0
 
 
 # ============ AI 智能断句功能 ============

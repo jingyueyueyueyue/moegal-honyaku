@@ -3,7 +3,12 @@ import os
 from app.core.logger import logger
 
 TRANSLATE_API_TYPE_OPTIONS = ("dashscope", "openai")
-TRANSLATE_MODE_OPTIONS = ("parallel", "structured")
+# parallel: 每句并发请求
+# structured: 单请求列表输入输出
+# context: 上下文感知翻译（单图片内）
+# context-batch: 批量等待所有图片，一次性翻译（跨图片上下文）
+# context-sequential: 顺序翻译，累积上下文（跨图片上下文）
+TRANSLATE_MODE_OPTIONS = ("parallel", "structured", "context", "context-batch", "context-sequential")
 OCR_ENGINE_OPTIONS = ("local", "vision")
 
 # 从环境变量读取 OCR 引擎默认值（由 start.cmd 设置）
