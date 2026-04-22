@@ -4,6 +4,8 @@ from app.core.custom_conf import (
     TRANSLATE_API_TYPE_OPTIONS,
     TRANSLATE_MODE_OPTIONS,
     OCR_ENGINE_OPTIONS,
+    LOCAL_OCR_ENGINE_OPTIONS,
+    INPAINT_METHOD_OPTIONS,
 )
 from pydantic import BaseModel
 from typing import Union, Optional
@@ -39,6 +41,13 @@ class BatchUpdateItem(BaseModel):
     vision_dashscope_api_key: Optional[str] = None
     vision_dashscope_base_url: Optional[str] = None
     vision_dashscope_model: Optional[str] = None
+    # 本地 OCR 引擎细分配置
+    local_ocr_engine: Optional[str] = None
+    # Inpainting 配置
+    inpaint_method: Optional[str] = None
+    use_crf_refine: Optional[bool] = None
+    # 文本框合并配置
+    merge_textboxes: Optional[bool] = None
 
 @update_conf_router.post("/conf/init")
 def init_conf():
@@ -81,4 +90,8 @@ def query_conf_options():
         "auto_save_image": [True, False],
         "enable_ai_linebreak": [True, False],
         "vision_ocr_provider": ["openai", "dashscope"],
+        "local_ocr_engine": list(LOCAL_OCR_ENGINE_OPTIONS),
+        "inpaint_method": list(INPAINT_METHOD_OPTIONS),
+        "use_crf_refine": [True, False],
+        "merge_textboxes": [True, False],
     }

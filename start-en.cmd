@@ -76,7 +76,7 @@ if not "%UV_BIN%"=="uv" if not exist "%UV_BIN%" (
     )
     set "UV_ZIP_URL=https://github.com/astral-sh/uv/releases/latest/download/uv-!UV_ARCH!-pc-windows-msvc.zip"
     if not exist "%UV_HOME%" mkdir "%UV_HOME%"
-    powershell -NoProfile -Command "Invoke-WebRequest -UseBasicParsing -Uri '!UV_ZIP_URL!' -OutFile \`"$env:TEMP\uv.zip\`"; Expand-Archive -Path \`"$env:TEMP\uv.zip\`" -DestinationPath \`"$env:TEMP\uv_extract\`" -Force; Copy-Item (Get-ChildItem -Path \`"$env:TEMP\uv_extract\`" -Recurse -Filter 'uv.exe' ^| Select-Object -First 1).FullName '!UV_BIN!' -Force"
+    powershell -NoProfile -Command "Invoke-WebRequest -UseBasicParsing -Uri '!UV_ZIP_URL!' -OutFile \"$env:TEMP\uv.zip\"; Expand-Archive -Path \"$env:TEMP\uv.zip\" -DestinationPath \"$env:TEMP\uv_extract\" -Force; Copy-Item (Get-ChildItem -Path \"$env:TEMP\uv_extract\" -Recurse -Filter 'uv.exe' ^| Select-Object -First 1).FullName '!UV_BIN!' -Force"
 )
 
 echo Installing Python 3.12...
@@ -92,6 +92,15 @@ echo Installing PyTorch...
 
 echo Installing dependencies...
 "%UV_BIN%" pip install -r "%REQUIREMENTS_FILE%" --index-strategy unsafe-best-match
+
+echo Installing pydensecrf (optional: CRF mask refinement)...
+"%UV_BIN%" pip install "pydensecrf@https://github.com/lucasb-eyer/pydensecrf/archive/refs/heads/master.zip" 2>nul
+if %errorlevel% neq 0 (
+    echo WARNING: pydensecrf installation failed, CRF mask refinement will not be available
+    echo TIP: Install Visual Studio Build Tools first, then: pip install pydensecrf
+) else (
+    echo pydensecrf installed successfully
+)
 
 echo Starting server...
 if not defined SERVER_PORT set "SERVER_PORT=8000"

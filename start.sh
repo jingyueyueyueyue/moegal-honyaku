@@ -110,6 +110,15 @@ echo "正在安装 PyTorch..."
 echo "正在安装其他依赖..."
 "$UV_BIN" pip install -r "$REQUIREMENTS_FILE" --index-strategy unsafe-best-match
 
+# 尝试安装 pydensecrf（可选依赖）
+echo "尝试安装 pydensecrf (可选: CRF 掩码细化)..."
+if "$UV_BIN" pip install "pydensecrf@https://github.com/lucasb-eyer/pydensecrf/archive/refs/heads/master.zip" 2>/dev/null; then
+    echo "pydensecrf 安装成功"
+else
+    echo "警告: pydensecrf 安装失败，CRF 掩码细化功能将不可用"
+    echo "提示: 安装 C++ 编译环境后可手动安装: pip install pydensecrf"
+fi
+
 echo "启动服务..."
 SERVER_PORT=${SERVER_PORT:-8000}
 "$VENV_PYTHON" -m uvicorn main:app --host 0.0.0.0 --port $SERVER_PORT

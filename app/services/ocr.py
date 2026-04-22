@@ -4,6 +4,8 @@ import os
 import re
 from threading import Lock
 
+import cv2
+import numpy as np
 import torch
 from dotenv import load_dotenv
 from manga_ocr import MangaOcr
@@ -148,27 +150,84 @@ def get_paddle_ocr():
         return _PADDLE_OCR
 
     try:
+        # 禁用 OneDNN 后端（Windows + CUDA 兼容性）
+        # OneDNN 与 CUDA 在 Windows 上存在兼容性问题：
+        # NotFoundError: OneDnnContext does not have the input Filter
+        import os
+        os.environ['FLAGS_use_mkldnn'] = '0'
+        os.environ['FLAGS_enable_onednn_backend'] = '0'
+        
         from paddleocr import PaddleOCR
 
-        # PaddleOCR 3.x 新 API
+        # PaddleOCR 2.x/3.x 兼容
         # 参数说明：
-        # - use_doc_orientation_classify: 是否使用文档方向分类
-        # - use_doc_unwarping: 是否使用文档矫正
-        # - use_textline_orientation: 是否使用文本行方向分类
+        # - use_angle_cls: 是否使用方向分类（2.x）
         # - lang: 语言设置（japan, en, ch, korean 等）
-        _PADDLE_OCR = PaddleOCR(
-            use_doc_orientation_classify=True,
-            use_doc_unwarping=False,
-            use_textline_orientation=True,
-            lang=PADDLE_OCR_LANG,
-            show_log=False,
-        )
+        # - use_gpu: 是否使用 GPU（自动检测）
+        # - show_log: 是否显示日志
+        # - enable_mkldnn: 是否启用 MKL-DNN（禁用以避免兼容性问题）
+        try:
+            # 尝试 PaddleOCR 3.x 新 API
+            _PADDLE_OCR = PaddleOCR(
+                use_doc_orientation_classify=True,
+                use_doc_unwarping=False,
+                use_textline_orientation=True,
+                lang=PADDLE_OCR_LANG,
+                show_log=False,
+                enable_mkldnn=False,  # 禁用 MKL-DNN
+            )
+        except TypeError:
+            # 回退到 PaddleOCR 2.x API
+            _PADDLE_OCR = PaddleOCR(
+                use_angle_cls=True,
+                lang=PADDLE_OCR_LANG,
+                use_gpu=torch.cuda.is_available(),
+                show_log=False,
+                enable_mkldnn=False,  # 禁用 MKL-DNN
+            )
         logger.info(f"PaddleOCR 加载成功，语言: {PADDLE_OCR_LANG}")
         return _PADDLE_OCR
 
     except ImportError:
         logger.warning("PaddleOCR 未安装，请运行: pip install paddleocr paddlepaddle")
         return None
+
+
+def _paddle_ocr_recognize(paddle_ocr, img_cv: np.ndarray) -> str:
+    """
+    使用 PaddleOCR 识别文字（兼容 2.x 和 3.x）
+    """
+    try:
+        # 尝试 PaddleOCR 3.x API (predict 方法)
+        if hasattr(paddle_ocr, 'predict'):
+            result = paddle_ocr.predict(input=img_cv)
+            if not result:
+                return ""
+            
+            texts = []
+            for res in result:
+                if hasattr(res, 'rec_texts') and res.rec_texts:
+                    texts.extend(res.rec_texts)
+                elif hasattr(res, 'res') and isinstance(res.res, dict):
+                    if 'rec_texts' in res.res:
+                        texts.extend(res.res['rec_texts'])
+            return '\n'.join(texts)
+        
+        # 回退到 PaddleOCR 2.x API (ocr 方法)
+        result = paddle_ocr.ocr(img_cv, cls=True)
+        if not result or not result[0]:
+            return ""
+        
+        texts = []
+        for line in result[0]:
+            if line and len(line) >= 2:
+                texts.append(line[1][0])  # line[1][0] 是识别的文字
+        
+        return '\n'.join(texts)
+    
+    except Exception as e:
+        logger.warning(f"PaddleOCR 识别失败: {e}")
+        return ""
 
 
 def _detect_text_language(text: str) -> str:
@@ -318,7 +377,8 @@ def ocr_recognize(image_pil, prefer_engine: str = None) -> str:
     
     Args:
         image_pil: PIL Image 对象
-        prefer_engine: 指定引擎 ('manga_ocr', 'paddle_ocr', 'auto', 'vision', 'local')
+        prefer_engine: 指定引擎 ('manga_ocr', 'paddle_ocr', 'auto', 'vision', 'local',
+                       'model_48px', 'model_48px_ctc')
         
     Returns:
         识别出的文本
@@ -326,15 +386,24 @@ def ocr_recognize(image_pil, prefer_engine: str = None) -> str:
     import cv2
     import numpy as np
     
+    # 从 custom_conf 获取配置
+    from app.core.custom_conf import custom_conf
+    
     engine = prefer_engine or OCR_ENGINE
+    local_engine = custom_conf.local_ocr_engine
     
     # 多模态 OCR 模式
     if engine == 'vision':
         return vision_ocr_recognize(image_pil)
     
-    # local 模式：使用本地模型（auto 逻辑）
+    # local 模式：使用本地模型（根据 local_ocr_engine 配置）
     if engine == 'local':
-        engine = 'auto'
+        engine = local_engine
+    
+    # MIT OCR 模型（manga-image-translator）
+    if engine in ('model_48px', 'model_48px_ctc'):
+        from app.services.mit_ocr import mit_ocr_recognize
+        return mit_ocr_recognize(image_pil, engine)
     
     # 如果指定了 PaddleOCR
     if engine == 'paddle_ocr':
@@ -346,24 +415,7 @@ def ocr_recognize(image_pil, prefer_engine: str = None) -> str:
         
         # PIL 转 OpenCV
         img_cv = cv2.cvtColor(np.array(image_pil), cv2.COLOR_RGB2BGR)
-        
-        # PaddleOCR 3.x 使用 predict() 方法
-        result = paddle_ocr.predict(input=img_cv)
-        
-        if not result:
-            return ""
-        
-        # PaddleOCR 3.x 返回格式：每个 res 有 'rec_texts' 属性
-        texts = []
-        for res in result:
-            if hasattr(res, 'rec_texts') and res.rec_texts:
-                texts.extend(res.rec_texts)
-            elif hasattr(res, 'res') and isinstance(res.res, dict):
-                # 兼容可能的返回格式
-                if 'rec_texts' in res.res:
-                    texts.extend(res.res['rec_texts'])
-        
-        return '\n'.join(texts)
+        return _paddle_ocr_recognize(paddle_ocr, img_cv)
     
     # 如果指定了 MangaOCR
     if engine == 'manga_ocr':
@@ -380,25 +432,12 @@ def ocr_recognize(image_pil, prefer_engine: str = None) -> str:
             paddle_ocr = get_paddle_ocr()
             if paddle_ocr is not None:
                 img_cv = cv2.cvtColor(np.array(image_pil), cv2.COLOR_RGB2BGR)
+                paddle_text = _paddle_ocr_recognize(paddle_ocr, img_cv)
                 
-                # PaddleOCR 3.x 使用 predict() 方法
-                result = paddle_ocr.predict(input=img_cv)
-                
-                if result:
-                    texts = []
-                    for res in result:
-                        if hasattr(res, 'rec_texts') and res.rec_texts:
-                            texts.extend(res.rec_texts)
-                        elif hasattr(res, 'res') and isinstance(res.res, dict):
-                            if 'rec_texts' in res.res:
-                                texts.extend(res.res['rec_texts'])
-                    
-                    paddle_text = '\n'.join(texts)
-                    
-                    # 如果 PaddleOCR 结果更合理（更长或更可信），使用它
-                    if len(paddle_text) >= len(text) * 0.8:
-                        logger.debug(f"检测到英文内容，使用 PaddleOCR: {paddle_text[:30]}...")
-                        return paddle_text
+                # 如果 PaddleOCR 结果更合理（更长或更可信），使用它
+                if len(paddle_text) >= len(text) * 0.8:
+                    logger.debug(f"检测到英文内容，使用 PaddleOCR: {paddle_text[:30]}...")
+                    return paddle_text
         
         return text
     
@@ -459,7 +498,7 @@ def detect_text_regions(image_cv):
         if area >= min_box_area:
             filtered_bboxes.append(bbox)
     
-    logger.info(f"检测到 {len(filtered_bboxes)} 个文字区域（原始 {len(bboxes)} 个）")
+    logger.debug(f"检测到 {len(filtered_bboxes)} 个文字区域（原始 {len(bboxes)} 个）")
     
     return filtered_bboxes
 

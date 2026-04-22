@@ -37,6 +37,25 @@ def _elapsed_ms(start_ms: float) -> float:
     return round(_now_ms() - start_ms, 2)
 
 
+def _format_timing_summary(timings: dict[str, float]) -> str:
+    ordered_keys = (
+        "parse",
+        "fetch",
+        "decode",
+        "detect_mask_ocr",
+        "translate",
+        "draw",
+        "encode",
+    )
+    parts = []
+    for key in ordered_keys:
+        value = timings.get(key)
+        if value is None:
+            continue
+        parts.append(f"{key}={value}ms")
+    return " | ".join(parts)
+
+
 def _decode_image(file_bytes: bytes):
     if not file_bytes:
         raise TranslateWebInputError(400, "图片为空")
@@ -91,8 +110,7 @@ async def _translate_image_bytes(
             - True: 强制启用
             - False: 强制禁用
     """
-    from app.services.ocr import detect_text_regions
-    from app.services.pic_process import draw_text_on_boxes, get_text_masked_pic, save_img
+    from app.services.pic_process import draw_text_on_boxes_mit, get_text_masked_pic_auto, save_img
     from app.services.translate_api import translate_with_linebreak
 
     timings = {}  # 记录各阶段耗时
@@ -102,22 +120,21 @@ async def _translate_image_bytes(
     img_bgr_cv, img_pil = _decode_image(file_bytes)
     timings["decode"] = _elapsed_ms(t0)
     
-    # 文本检测
+    # 文本检测 + OCR + Inpainting（使用新的 MIT 高级流程）
     t1 = _now_ms()
-    bboxes = detect_text_regions(img_bgr_cv)
-    timings["detect"] = _elapsed_ms(t1)
-    
-    # 获取文本遮罩
-    t2 = _now_ms()
-    all_text, inpaint = await get_text_masked_pic(
-        img_pil, img_bgr_cv, bboxes, True, custom_conf.ocr_engine
+    all_text, inpaint, bboxes, raw_mask = await get_text_masked_pic_auto(
+        img_pil,
+        img_bgr_cv,
+        inpaint=True,
+        ocr_engine=custom_conf.ocr_engine,
+        text_direction=text_direction,
     )
-    timings["mask_ocr"] = _elapsed_ms(t2)
+    timings["detect_mask_ocr"] = _elapsed_ms(t1)
     
     if len(all_text) == 0:
         logger.warning("未检测出文字")
         return None, None, None, None, timings
-
+    
     # 确定是否启用 AI 断句（请求参数优先，否则使用全局配置）
     use_linebreak = enable_linebreak if enable_linebreak is not None else custom_conf.enable_ai_linebreak
 
@@ -131,9 +148,9 @@ async def _translate_image_bytes(
     )
     timings["translate"] = _elapsed_ms(t3)
 
-    # 绘制文字
+    # 绘制文字（使用 MIT 高质量渲染）
     t4 = _now_ms()
-    img_res = draw_text_on_boxes(inpaint, bboxes, cn_text, text_direction)
+    img_res = draw_text_on_boxes_mit(inpaint, bboxes, cn_text, text_direction, original_image=img_bgr_cv, raw_mask=raw_mask)
     timings["draw"] = _elapsed_ms(t4)
     
     # 编码结果图片
@@ -218,7 +235,10 @@ async def translate_upload(
         })
     b64_img, file_name = img_result
     duration = round(time.time() - start, 3)
-    logger.info(f"翻译成功 [{file_name}] 总耗时 {duration}s | 各阶段(ms): decode={timings['decode']}, detect={timings['detect']}, mask_ocr={timings['mask_ocr']}, translate={timings['translate']}, draw={timings['draw']}, encode={timings['encode']}")
+    timing_summary = _format_timing_summary(timings)
+    logger.info(
+        f"翻译成功 [{file_name}] total={duration}s | text={len(all_text)} | {timing_summary}"
+    )
     return JSONResponse(content={
         "status": "success",
         "duration": duration,
@@ -363,7 +383,10 @@ async def translate_web(request: Request, background_tasks: BackgroundTasks):
             })
         b64_img, file_name = img_result
         duration = round(time.time() - start, 3)
-        logger.info(f"翻译成功 [{file_name}] 总耗时 {duration}s | 各阶段(ms): parse={timings.get('parse', 0)}, fetch={timings.get('fetch', 0)}, decode={timings['decode']}, detect={timings['detect']}, mask_ocr={timings['mask_ocr']}, translate={timings['translate']}, draw={timings['draw']}, encode={timings['encode']}")
+        timing_summary = _format_timing_summary(timings)
+        logger.info(
+            f"翻译成功 [{file_name}] total={duration}s | text={len(all_text)} | {timing_summary}"
+        )
         return JSONResponse(content={
             "status": "success",
             "duration": duration,
@@ -446,8 +469,7 @@ async def translate_batch(request: Request, background_tasks: BackgroundTasks):
         ]
     }
     """
-    from app.services.ocr import detect_text_regions
-    from app.services.pic_process import draw_text_on_boxes, get_text_masked_pic, save_img
+    from app.services.pic_process import draw_text_on_boxes_mit, get_text_masked_pic_auto, save_img
     from app.services.translate_api import translate_batch_with_context, ai_linebreak_batch
     
     start = time.time()
@@ -473,7 +495,7 @@ async def translate_batch(request: Request, background_tasks: BackgroundTasks):
         
         # 1. 获取所有图片并检测文本
         pages_text = []  # 每页的文本列表
-        pages_data = []  # 每页的图片数据 (bboxes, inpaint_img, pil_img)
+        pages_data = []  # 每页的图片数据 (inpaint_img, pil_img)
         
         for item in req.images:
             # 获取图片
@@ -484,12 +506,13 @@ async def translate_batch(request: Request, background_tasks: BackgroundTasks):
             
             img_bgr_cv, img_pil = _decode_image(file_bytes)
             
-            # 检测文本区域
-            bboxes = detect_text_regions(img_bgr_cv)
-            
-            # 获取文本和遮罩
-            all_text, inpaint = await get_text_masked_pic(
-                img_pil, img_bgr_cv, bboxes, True, custom_conf.ocr_engine
+            # 使用 MIT 高级流程：检测 + OCR + Inpainting
+            all_text, inpaint, bboxes, raw_mask = await get_text_masked_pic_auto(
+                img_pil,
+                img_bgr_cv,
+                inpaint=True,
+                ocr_engine=custom_conf.ocr_engine,
+                text_direction=req.text_direction,
             )
             
             pages_text.append(all_text)
@@ -498,6 +521,7 @@ async def translate_batch(request: Request, background_tasks: BackgroundTasks):
                 "inpaint": inpaint,
                 "pil": img_pil,
                 "cv": img_bgr_cv,
+                "raw_mask": raw_mask,
             })
         
         # 2. 批量翻译（跨图片上下文）
@@ -530,12 +554,14 @@ async def translate_batch(request: Request, background_tasks: BackgroundTasks):
             translations = pages_translations[non_empty_indices.index(orig_idx)]
             page_data = pages_data[orig_idx]
             
-            # 绘制文字
-            img_res = draw_text_on_boxes(
+            # 绘制文字（使用 MIT 高质量渲染）
+            img_res = draw_text_on_boxes_mit(
                 page_data["inpaint"],
                 page_data["bboxes"],
                 translations,
-                req.text_direction
+                req.text_direction,
+                original_image=page_data["cv"],
+                raw_mask=page_data.get("raw_mask"),
             )
             
             # 编码
@@ -577,7 +603,11 @@ async def translate_batch(request: Request, background_tasks: BackgroundTasks):
                 })
         
         duration = round(time.time() - start, 3)
-        logger.info(f"批量翻译成功 {len(non_empty_indices)} 张图片，总耗时 {duration}s")
+        timing_summary = _format_timing_summary(timings)
+        logger.info(
+            f"批量翻译成功 pages={len(non_empty_indices)} | total={duration}s"
+            + (f" | {timing_summary}" if timing_summary else "")
+        )
         
         return JSONResponse(content={
             "status": "success",
@@ -645,8 +675,7 @@ async def translate_sequential(request: Request, background_tasks: BackgroundTas
         "enable_linebreak": true
     }
     """
-    from app.services.ocr import detect_text_regions
-    from app.services.pic_process import draw_text_on_boxes, get_text_masked_pic, save_img
+    from app.services.pic_process import draw_text_on_boxes_mit, get_text_masked_pic_auto, save_img
     from app.services.translate_api import translate_with_previous_context, ai_linebreak_batch
     
     start = time.time()
@@ -679,17 +708,16 @@ async def translate_sequential(request: Request, background_tasks: BackgroundTas
         img_bgr_cv, img_pil = _decode_image(file_bytes)
         timings["decode"] = _elapsed_ms(t_decode)
         
-        # 文本检测
+        # 使用 MIT 高级流程：检测 + OCR + Inpainting
         t_detect = _now_ms()
-        bboxes = detect_text_regions(img_bgr_cv)
-        timings["detect"] = _elapsed_ms(t_detect)
-        
-        # 获取文本遮罩
-        t_mask = _now_ms()
-        all_text, inpaint = await get_text_masked_pic(
-            img_pil, img_bgr_cv, bboxes, True, custom_conf.ocr_engine
+        all_text, inpaint, bboxes, raw_mask = await get_text_masked_pic_auto(
+            img_pil,
+            img_bgr_cv,
+            inpaint=True,
+            ocr_engine=custom_conf.ocr_engine,
+            text_direction=req.text_direction,
         )
-        timings["mask_ocr"] = _elapsed_ms(t_mask)
+        timings["detect_mask_ocr"] = _elapsed_ms(t_detect)
         
         if len(all_text) == 0:
             return JSONResponse(content={
@@ -712,9 +740,9 @@ async def translate_sequential(request: Request, background_tasks: BackgroundTas
             cn_text = await ai_linebreak_batch(cn_text, custom_conf.translate_api_type)
         timings["translate"] = _elapsed_ms(t_translate)
         
-        # 绘制文字
+        # 绘制文字（使用 MIT 高质量渲染）
         t_draw = _now_ms()
-        img_res = draw_text_on_boxes(inpaint, bboxes, cn_text, req.text_direction)
+        img_res = draw_text_on_boxes_mit(inpaint, bboxes, cn_text, req.text_direction, original_image=img_bgr_cv, raw_mask=raw_mask)
         timings["draw"] = _elapsed_ms(t_draw)
         
         # 编码
@@ -733,7 +761,10 @@ async def translate_sequential(request: Request, background_tasks: BackgroundTas
         b64_img = base64.b64encode(cn_file_bytes).decode("utf8")
         duration = round(time.time() - start, 3)
         
-        logger.info(f"顺序翻译成功 [{file_name}] 总耗时 {duration}s")
+        timing_summary = _format_timing_summary(timings)
+        logger.info(
+            f"顺序翻译成功 [{file_name}] total={duration}s | text={len(all_text)} | {timing_summary}"
+        )
         
         return JSONResponse(content={
             "status": "success",

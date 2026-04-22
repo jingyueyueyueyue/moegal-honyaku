@@ -22,6 +22,7 @@ dnspython==2.7.0
 email_validator==2.2.0
 fastapi==0.115.13
 fastapi-cli==0.0.7
+einops==0.8.0
 filelock==3.18.0
 fire==0.7.0
 fonttools==4.58.4
@@ -38,6 +39,7 @@ jaconv==0.4.0
 Jinja2==3.1.6
 jiter==0.10.0
 kiwisolver==1.4.8
+kornia==0.7.4
 loguru==0.7.3
 manga-ocr==0.1.14
 markdown-it-py==3.0.0
@@ -56,6 +58,7 @@ pillow==11.2.1
 propcache==0.3.2
 psutil==7.0.0
 py-cpuinfo==9.0.0
+# pydensecrf 由启动脚本单独安装（可选依赖）
 pydantic==2.11.7
 pydantic_core==2.33.2
 Pygments==2.19.1
@@ -65,6 +68,7 @@ python-dateutil==2.9.0.post0
 python-dotenv==1.1.0
 python-multipart==0.0.20
 pytz==2025.2
+onnxruntime
 PyYAML==6.0.2
 regex==2024.11.6
 requests==2.32.4
@@ -86,7 +90,7 @@ typer==0.16.0
 typing-inspection==0.4.1
 typing_extensions==4.14.0
 tzdata==2025.2
-ultralytics==8.3.157
+ultralytics==8.4.14
 ultralytics-thop==2.0.14
 unidic-lite==1.0.8
 urllib3==2.5.0

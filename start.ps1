@@ -102,6 +102,16 @@ Write-Host '正在安装 PyTorch...'
 Write-Host '正在安装其他依赖...'
 & $UV_BIN pip install -r $REQUIREMENTS_FILE --index-strategy unsafe-best-match
 
+# 尝试安装 pydensecrf（可选依赖，编译需要 C++ 环境）
+Write-Host '尝试安装 pydensecrf (可选: CRF 掩码细化)...'
+$pydensecrfResult = & $UV_BIN pip install "pydensecrf@https://github.com/lucasb-eyer/pydensecrf/archive/refs/heads/master.zip" 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host '警告: pydensecrf 安装失败，CRF 掩码细化功能将不可用'
+    Write-Host '提示: 安装 Visual Studio Build Tools 后可手动安装: pip install pydensecrf'
+} else {
+    Write-Host 'pydensecrf 安装成功'
+}
+
 Write-Host '启动服务...'
 if (-not $env:SERVER_PORT) { $env:SERVER_PORT = '8000' }
 & $VENV_PYTHON -m uvicorn main:app --host 0.0.0.0 --port $env:SERVER_PORT

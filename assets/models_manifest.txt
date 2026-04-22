@@ -1,5 +1,8 @@
 # Relative paths under assets/models/
+# 气泡检测模型
 comic-text-segmenter.pt
+
+# MangaOCR 默认模型
 manga-ocr-base/README.md
 manga-ocr-base/config.json
 manga-ocr-base/.gitattributes

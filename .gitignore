@@ -44,3 +44,9 @@ coverage.xml
 
 .mypy_cache/
 .dmypy.json
+
+diag/
+fonts/
+models/
+test_merge.py
+test_merge_result.jpg
