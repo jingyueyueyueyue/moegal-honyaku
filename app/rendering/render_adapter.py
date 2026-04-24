@@ -108,8 +108,8 @@ def calculate_font_size(
         import math
         # 使用气泡的宽高比来估算合理的列数
         aspect_ratio = box_width / box_height
-        cols_estimate = max(1, int(round(text_len * aspect_ratio / 3)))
-        initial_font_size = int(box_width / cols_estimate * 0.85)
+        cols_estimate = max(1, int(round(text_len * aspect_ratio / 4.0)))
+        initial_font_size = int(box_width / cols_estimate * 0.92)
     
     # 确保初始字体大小在合理范围内，且不超过框的尺寸
     initial_font_size = max(min_font_size, min(initial_font_size, max_font_size, box_width, box_height))

@@ -651,6 +651,7 @@ def _render_text_bitmap_with_fit(
     align_x: str = "center",
     align_y: str = "center",
     bubble_mask: np.ndarray | None = None,
+    line_spacing: float = 1.0,
 ):
     """Render text and keep shrinking until the final bitmap is safely inside the target box."""
     if not text or box_width <= 0 or box_height <= 0:
@@ -674,7 +675,7 @@ def _render_text_bitmap_with_fit(
                 bg=stroke_color,
                 lang=target_lang,
                 hyphenate=True,
-                line_spacing=0,
+                line_spacing=line_spacing,
                 stroke_width=0.07,
                 letter_spacing=1.0,
             )
@@ -686,7 +687,7 @@ def _render_text_bitmap_with_fit(
                 alignment=align_y,
                 fg=fill_color,
                 bg=stroke_color,
-                line_spacing=0,
+                line_spacing=line_spacing,
                 stroke_width=0.07,
                 letter_spacing=1.0,
             )
@@ -2724,11 +2725,12 @@ def draw_text_on_boxes_mit(
     height, width = image.shape[:2]
     result = image.copy()
     is_horizontal = text_direction == "horizontal"
+    render_line_spacing = 1.0 if is_horizontal else 0.72
     
     # 创建渲染配置
     render_config = TextRenderConfig(
         stroke_width=0.07,
-        line_spacing=1.0,
+        line_spacing=render_line_spacing,
         letter_spacing=1.0,
     )
     render_groups = _build_render_groups(boxes, text_direction)
@@ -2823,8 +2825,10 @@ def draw_text_on_boxes_mit(
         hint_bbox = bubble_layout["hint_bbox"]
         if hint_bbox is not None:
             _, _, hint_w, hint_h = hint_bbox
-            layout_box_width = max(1, min(render_box_width, hint_w - 4))
-            layout_box_height = max(1, min(render_box_height, hint_h - 4))
+            min_hint_width = max(1, int(round(render_box_width * 0.85)))
+            min_hint_height = max(1, int(round(render_box_height * 0.85)))
+            layout_box_width = max(1, min(render_box_width, max(hint_w - 4, min_hint_width)))
+            layout_box_height = max(1, min(render_box_height, max(hint_h - 4, min_hint_height)))
         
         # 处理特殊符号
         text = compact_special_symbols(text, convert_ascii_ellipsis=not is_horizontal)
@@ -2876,6 +2880,50 @@ def draw_text_on_boxes_mit(
             )
         for idx in valid_group:
             font_sizes[idx] = shared_font_size
+
+    if is_horizontal:
+        for group in render_groups:
+            valid_group = [
+                idx for idx in group
+                if idx in font_sizes and idx in render_layouts
+            ]
+            if len(valid_group) <= 1:
+                continue
+
+            fitted_group_sizes = []
+            for idx in valid_group:
+                render_layout = render_layouts[idx]
+                render_box_width = render_layout["render_x2"] - render_layout["render_x1"]
+                render_box_height = render_layout["render_y2"] - render_layout["render_y1"]
+                if render_box_width <= 0 or render_box_height <= 0:
+                    continue
+
+                render_text = text_with_br_list[idx] if text_with_br_list[idx] else texts[idx]
+                _, fitted_size = _render_text_bitmap_with_fit(
+                    text=render_text,
+                    font_size=font_sizes[idx],
+                    box_width=render_box_width,
+                    box_height=render_box_height,
+                    is_horizontal=True,
+                    fill_color=(0, 0, 0),
+                    stroke_color=(255, 255, 255),
+                    target_lang=target_lang,
+                    bubble_mask=render_layout["bubble_mask"],
+                    line_spacing=render_line_spacing,
+                )
+                fitted_group_sizes.append(max(6, int(fitted_size)))
+
+            if not fitted_group_sizes:
+                continue
+
+            shared_fitted_size = min(fitted_group_sizes)
+            if len(set(fitted_group_sizes)) > 1:
+                logger.debug(
+                    f"同气泡最终适配字号统一: group={valid_group}, "
+                    f"fitted={fitted_group_sizes} -> {shared_fitted_size}"
+                )
+            for idx in valid_group:
+                font_sizes[idx] = shared_fitted_size
     
     # ============ 第二步：渲染每个文本框 ============
     # 对同一气泡内的相邻框统一字号，避免双竖排被分开识别后大小失衡。
@@ -2945,6 +2993,7 @@ def draw_text_on_boxes_mit(
                 target_lang=target_lang,
                 align_y=vertical_alignment,
                 bubble_mask=render_layout["bubble_mask"],
+                line_spacing=render_line_spacing,
             )
             if fitted_font_size < font_size:
                 logger.debug(

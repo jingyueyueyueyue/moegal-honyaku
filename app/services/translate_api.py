@@ -616,3 +616,28 @@ async def translate_with_linebreak(
         translated = await ai_linebreak_batch(translated, api_type)
     
     return translated, cost
+
+
+async def translate_req(all_text, api_type: str = "dashscope", translate_mode: str = "parallel"):
+    if translate_mode == "parallel":
+        return await _translate_parallel(all_text, api_type)
+
+    try:
+        if translate_mode == "structured":
+            return await _translate_structured(all_text, api_type)
+        if translate_mode == "context":
+            return await _translate_context(all_text, api_type)
+        if translate_mode in ("context-batch", "context-sequential"):
+            return await _translate_context(all_text, api_type)
+    except RuntimeError as exc:
+        from app.core.logger import logger
+
+        logger.warning(
+            "Structured translation failed, falling back to parallel mode: mode=%s api_type=%s error=%s",
+            translate_mode,
+            api_type,
+            exc,
+        )
+        return await _translate_parallel(all_text, api_type)
+
+    raise RuntimeError(f"涓嶆敮鎸佺殑 translate_mode: {translate_mode}")

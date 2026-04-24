@@ -967,7 +967,7 @@ def _resolve_initial_segments(
         aspect_ratio = safe_width / safe_height
         # 列数应该基于：文本长度 / (高度/宽度) 的合理比例
         # 简化：列数 ≈ text_len * aspect_ratio / 2
-        estimated_segments = max(1, int(round(text_len * aspect_ratio / 3)))
+        estimated_segments = max(1, int(round(text_len * aspect_ratio / 4.0)))
     
     return max(1, min(estimated_segments, text_len))
 
