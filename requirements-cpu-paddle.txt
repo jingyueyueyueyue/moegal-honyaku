@@ -1,14 +1,9 @@
-# CPU + PaddleOCR 版本 - 无 GPU 加速，使用 PaddleOCR 作为 OCR 引擎
---extra-index-url https://download.pytorch.org/whl/cpu
+# Runtime dependencies for CPU + PaddleOCR mode.
+# PyTorch is installed separately by start.ps1 from the CPU index.
+# PaddleOCR dependencies.
 
-torch==2.7.1+cpu
-torchvision==0.22.1+cpu
-
-# PaddleOCR 依赖（对 CPU 更友好）
-# PaddleOCR 3.0+ 放宽了 numpy 版本限制，支持 numpy 2.x
 paddlepaddle>=3.0.0
 paddleocr>=3.0.0
-
 aiohappyeyeballs==2.6.1
 aiohttp==3.12.13
 aiosignal==1.3.2
@@ -54,8 +49,6 @@ mdurl==0.1.2
 mpmath==1.3.0
 multidict==6.5.0
 networkx==3.5
-# numpy 版本由 PaddleOCR 和其他依赖自动解析
-numpy>=1.24.0,<3.0.0
 openai==1.90.0
 opencv-python==4.11.0.86
 packaging==25.0
@@ -64,7 +57,6 @@ pillow==11.2.1
 propcache==0.3.2
 psutil==7.0.0
 py-cpuinfo==9.0.0
-# pydensecrf 由启动脚本单独安装（可选依赖）
 pydantic==2.11.7
 pydantic_core==2.33.2
 Pygments==2.19.1

@@ -1,8 +1,5 @@
-# CPU 版本 - 无 GPU 加速
---extra-index-url https://download.pytorch.org/whl/cpu
-
-torch==2.7.1+cpu
-torchvision==0.22.1+cpu
+# Runtime dependencies for CPU mode.
+# PyTorch is installed separately by start.ps1 from the CPU index.
 
 aiohappyeyeballs==2.6.1
 aiohttp==3.12.13
@@ -58,7 +55,6 @@ pillow==11.2.1
 propcache==0.3.2
 psutil==7.0.0
 py-cpuinfo==9.0.0
-# pydensecrf 由启动脚本单独安装（可选依赖）
 pydantic==2.11.7
 pydantic_core==2.33.2
 Pygments==2.19.1

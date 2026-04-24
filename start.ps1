@@ -73,7 +73,7 @@ function Select-Options {
         '1' {
             return @{
                 RequirementsFile = 'requirements-cu128.txt'
-                TorchPackages = @('torch==2.7.1+cu128', 'torchvision==0.22.1+cu128')
+                TorchPackages = @('torch==2.7.1', 'torchvision==0.22.1')
                 TorchIndexUrl = 'https://download.pytorch.org/whl/cu128'
                 UseGpu = '1'
             }
@@ -81,7 +81,7 @@ function Select-Options {
         '3' {
             return @{
                 RequirementsFile = 'requirements-cpu.txt'
-                TorchPackages = @('torch==2.7.1+cpu', 'torchvision==0.22.1+cpu')
+                TorchPackages = @('torch==2.7.1', 'torchvision==0.22.1')
                 TorchIndexUrl = 'https://download.pytorch.org/whl/cpu'
                 UseGpu = '0'
             }
@@ -90,7 +90,7 @@ function Select-Options {
             $env:OCR_ENGINE = 'paddle_ocr'
             return @{
                 RequirementsFile = 'requirements-cpu-paddle.txt'
-                TorchPackages = @('torch==2.7.1+cpu', 'torchvision==0.22.1+cpu')
+                TorchPackages = @('torch==2.7.1', 'torchvision==0.22.1')
                 TorchIndexUrl = 'https://download.pytorch.org/whl/cpu'
                 UseGpu = '0'
             }
@@ -101,7 +101,7 @@ function Select-Options {
             }
             return @{
                 RequirementsFile = 'requirements-cu126.txt'
-                TorchPackages = @('torch==2.7.1+cu126', 'torchvision==0.22.1+cu126')
+                TorchPackages = @('torch==2.7.1', 'torchvision==0.22.1')
                 TorchIndexUrl = 'https://download.pytorch.org/whl/cu126'
                 UseGpu = '1'
             }
