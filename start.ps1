@@ -1,117 +1,227 @@
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
+$ErrorActionPreference = 'Stop'
 
-Write-Host '请选择 OCR 引擎：'
-Write-Host '  [1] 本地 OCR'
-Write-Host '  [2] Vision OCR'
-$OCR_CHOICE = Read-Host '请输入选项 [1/2] (默认 1)'
-if ([string]::IsNullOrWhiteSpace($OCR_CHOICE)) { $OCR_CHOICE = '1' }
-
-Write-Host ''
-Write-Host '请选择运行模式：'
-Write-Host '  [1] RTX 50系列 (CUDA 12.8)'
-Write-Host '  [2] 其他显卡 (CUDA 12.6)'
-Write-Host '  [3] CPU 模式 (无 GPU，使用 MangaOCR)'
-Write-Host '  [4] CPU + PaddleOCR 模式 (推荐低配服务器)'
-$GPU_CHOICE = Read-Host '请输入选项 [1/2/3/4] (默认 2)'
-if ([string]::IsNullOrWhiteSpace($GPU_CHOICE)) { $GPU_CHOICE = '2' }
-
-if ($OCR_CHOICE -eq '1') {
-    $env:MOEGAL_OCR_ENGINE = 'local'
-} elseif ($OCR_CHOICE -eq '2') {
-    $env:MOEGAL_OCR_ENGINE = 'vision'
-} else {
-    $env:MOEGAL_OCR_ENGINE = 'local'
+function Write-Step {
+    param([Parameter(Mandatory = $true)][string]$Message)
+    Write-Host ''
+    Write-Host "==> $Message"
 }
 
-if ($GPU_CHOICE -eq '1') {
-    $REQUIREMENTS_FILE = 'requirements-cu128.txt'
-    $TORCH_VERSION = 'torch==2.7.1+cu128 torchvision==0.22.1+cu128'
-    $TORCH_INDEX_URL = 'https://download.pytorch.org/whl/cu128'
-    $env:MOEGAL_USE_GPU = '1'
-} elseif ($GPU_CHOICE -eq '3') {
-    $REQUIREMENTS_FILE = 'requirements-cpu.txt'
-    $TORCH_VERSION = 'torch==2.7.1+cpu torchvision==0.22.1+cpu'
-    $TORCH_INDEX_URL = 'https://download.pytorch.org/whl/cpu'
-    $env:MOEGAL_USE_GPU = '0'
-} elseif ($GPU_CHOICE -eq '4') {
-    $REQUIREMENTS_FILE = 'requirements-cpu-paddle.txt'
-    $TORCH_VERSION = 'torch==2.7.1+cpu torchvision==0.22.1+cpu'
-    $TORCH_INDEX_URL = 'https://download.pytorch.org/whl/cpu'
-    $env:MOEGAL_USE_GPU = '0'
-    $env:OCR_ENGINE = 'paddle_ocr'
-} else {
-    $REQUIREMENTS_FILE = 'requirements-cu126.txt'
-    $TORCH_VERSION = 'torch==2.7.1+cu126 torchvision==0.22.1+cu126'
-    $TORCH_INDEX_URL = 'https://download.pytorch.org/whl/cu126'
-    $env:MOEGAL_USE_GPU = '1'
+function Invoke-Checked {
+    param(
+        [Parameter(Mandatory = $true)][string]$Description,
+        [Parameter(Mandatory = $true)][scriptblock]$Command
+    )
+
+    Write-Step $Description
+    & $Command
+    $exitCode = $LASTEXITCODE
+    if ($null -ne $exitCode -and $exitCode -ne 0) {
+        throw "$Description failed with exit code $exitCode."
+    }
 }
 
-$ROOT_DIR = $PSScriptRoot
-Set-Location $ROOT_DIR
+function New-FilteredRequirementsFile {
+    param([Parameter(Mandatory = $true)][string]$SourcePath)
 
-$TOOLS_DIR = Join-Path $ROOT_DIR '.tools'
-$UV_HOME = Join-Path $TOOLS_DIR 'uv'
-$VENV_PYTHON = Join-Path $ROOT_DIR '.venv\Scripts\python.exe'
-
-# 优先使用全局安装的 uv
-if (Get-Command uv -ErrorAction SilentlyContinue) {
-    $UV_BIN = 'uv'
-} else {
-    $UV_BIN = Join-Path $UV_HOME 'uv.exe'
+    $targetPath = Join-Path $env:TEMP 'moegal_honyaku_requirements_no_torch.txt'
+    $skipPattern = '^(\s*(--extra-index-url|--index-url|--find-links)\b|\s*(torch|torchvision)\s*[=<>!~@])'
+    Get-Content -LiteralPath $SourcePath | Where-Object { $_ -notmatch $skipPattern } | Set-Content -LiteralPath $targetPath -Encoding UTF8
+    return $targetPath
 }
 
-$env:UV_CACHE_DIR = Join-Path $ROOT_DIR '.cache\uv'
-$env:UV_PYTHON_INSTALL_DIR = Join-Path $ROOT_DIR '.python'
-$env:UV_PROJECT_ENVIRONMENT = Join-Path $ROOT_DIR '.venv'
-$env:UV_PYTHON_PREFERENCE = 'managed'
-$env:UV_PYTHON_INSTALL_BIN = '0'
+function Assert-PythonModule {
+    param(
+        [Parameter(Mandatory = $true)][string]$PythonPath,
+        [Parameter(Mandatory = $true)][string]$ModuleName
+    )
 
-if (-not $env:UV_DEFAULT_INDEX) {
-    $env:UV_DEFAULT_INDEX = 'https://pypi.tuna.tsinghua.edu.cn/simple'
+    & $PythonPath -c "import $ModuleName" 2>$null
+    $exitCode = $LASTEXITCODE
+    if ($null -ne $exitCode -and $exitCode -ne 0) {
+        throw "Required Python module '$ModuleName' is missing. Dependency installation did not complete."
+    }
 }
 
-if ($UV_BIN -ne 'uv' -and -not (Test-Path $UV_BIN)) {
-    Write-Host 'Downloading uv...'
-    $UV_ARCH = 'x86_64'
-    if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { $UV_ARCH = 'aarch64' }
-    $UV_ZIP_URL = 'https://github.com/astral-sh/uv/releases/latest/download/uv-' + $UV_ARCH + '-pc-windows-msvc.zip'
-    $UV_TMP = Join-Path $env:TEMP 'moegal_honyaku_uv.zip'
-    $UV_TMP_DIR = Join-Path $env:TEMP 'moegal_honyaku_uv'
-    New-Item -ItemType Directory -Force -Path $UV_HOME | Out-Null
-    Invoke-WebRequest -UseBasicParsing -Uri $UV_ZIP_URL -OutFile $UV_TMP
-    Expand-Archive -Path $UV_TMP -DestinationPath $UV_TMP_DIR -Force
-    $UV_EXTRACTED = Get-ChildItem -Path $UV_TMP_DIR -Recurse -Filter 'uv.exe' | Select-Object -First 1
-    Copy-Item $UV_EXTRACTED.FullName $UV_BIN -Force
-    Remove-Item $UV_TMP -Force -ErrorAction SilentlyContinue
-    Remove-Item $UV_TMP_DIR -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Host 'uv downloaded successfully.'
+function Select-Options {
+    Write-Host 'Select OCR Engine:'
+    Write-Host '  [1] Local OCR'
+    Write-Host '  [2] Vision OCR'
+    $ocrChoice = Read-Host 'Enter option [1/2] (default 1)'
+    if ([string]::IsNullOrWhiteSpace($ocrChoice)) { $ocrChoice = '1' }
+
+    switch ($ocrChoice) {
+        '1' { $env:MOEGAL_OCR_ENGINE = 'local' }
+        '2' { $env:MOEGAL_OCR_ENGINE = 'vision' }
+        default {
+            Write-Host "Invalid OCR option '$ocrChoice'. Using Local OCR."
+            $env:MOEGAL_OCR_ENGINE = 'local'
+        }
+    }
+
+    Write-Host ''
+    Write-Host 'Select Mode:'
+    Write-Host '  [1] RTX 50 Series (CUDA 12.8)'
+    Write-Host '  [2] Other GPU (CUDA 12.6)'
+    Write-Host '  [3] CPU Mode (No GPU, MangaOCR)'
+    Write-Host '  [4] CPU + PaddleOCR Mode (recommended for low-spec machines)'
+    $gpuChoice = Read-Host 'Enter option [1/2/3/4] (default 2)'
+    if ([string]::IsNullOrWhiteSpace($gpuChoice)) { $gpuChoice = '2' }
+
+    switch ($gpuChoice) {
+        '1' {
+            return @{
+                RequirementsFile = 'requirements-cu128.txt'
+                TorchPackages = @('torch==2.7.1+cu128', 'torchvision==0.22.1+cu128')
+                TorchIndexUrl = 'https://download.pytorch.org/whl/cu128'
+                UseGpu = '1'
+            }
+        }
+        '3' {
+            return @{
+                RequirementsFile = 'requirements-cpu.txt'
+                TorchPackages = @('torch==2.7.1+cpu', 'torchvision==0.22.1+cpu')
+                TorchIndexUrl = 'https://download.pytorch.org/whl/cpu'
+                UseGpu = '0'
+            }
+        }
+        '4' {
+            $env:OCR_ENGINE = 'paddle_ocr'
+            return @{
+                RequirementsFile = 'requirements-cpu-paddle.txt'
+                TorchPackages = @('torch==2.7.1+cpu', 'torchvision==0.22.1+cpu')
+                TorchIndexUrl = 'https://download.pytorch.org/whl/cpu'
+                UseGpu = '0'
+            }
+        }
+        default {
+            if ($gpuChoice -ne '2') {
+                Write-Host "Invalid mode option '$gpuChoice'. Using Other GPU (CUDA 12.6)."
+            }
+            return @{
+                RequirementsFile = 'requirements-cu126.txt'
+                TorchPackages = @('torch==2.7.1+cu126', 'torchvision==0.22.1+cu126')
+                TorchIndexUrl = 'https://download.pytorch.org/whl/cu126'
+                UseGpu = '1'
+            }
+        }
+    }
 }
 
-Write-Host 'Installing Python 3.12...'
-& $UV_BIN python install 3.12 --no-bin
+try {
+    $options = Select-Options
+    $env:MOEGAL_USE_GPU = $options.UseGpu
 
-Write-Host '正在创建虚拟环境...'
-if (-not (Test-Path $VENV_PYTHON)) {
-    & $UV_BIN venv --python 3.12
+    $rootDir = $PSScriptRoot
+    if ([string]::IsNullOrWhiteSpace($rootDir)) {
+        $rootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    }
+    Set-Location $rootDir
+
+    $requirementsPath = Join-Path $rootDir $options.RequirementsFile
+    if (-not (Test-Path -LiteralPath $requirementsPath)) {
+        throw "Requirements file not found: $requirementsPath"
+    }
+
+    $toolsDir = Join-Path $rootDir '.tools'
+    $uvHome = Join-Path $toolsDir 'uv'
+    $venvPython = Join-Path $rootDir '.venv\Scripts\python.exe'
+
+    $globalUv = Get-Command uv -ErrorAction SilentlyContinue
+    if ($globalUv) {
+        $uvBin = $globalUv.Source
+    } else {
+        $uvBin = Join-Path $uvHome 'uv.exe'
+    }
+
+    $env:UV_CACHE_DIR = Join-Path $rootDir '.cache\uv'
+    $env:UV_PYTHON_INSTALL_DIR = Join-Path $rootDir '.python'
+    $env:UV_PROJECT_ENVIRONMENT = Join-Path $rootDir '.venv'
+    $env:UV_PYTHON_PREFERENCE = 'managed'
+    $env:UV_PYTHON_INSTALL_BIN = '0'
+
+    if (-not $env:UV_DEFAULT_INDEX) {
+        $env:UV_DEFAULT_INDEX = 'https://pypi.tuna.tsinghua.edu.cn/simple'
+    }
+
+    if (-not (Test-Path -LiteralPath $uvBin)) {
+        Write-Step 'Downloading uv'
+        $uvArch = 'x86_64'
+        if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { $uvArch = 'aarch64' }
+        $uvZipUrl = "https://github.com/astral-sh/uv/releases/latest/download/uv-$uvArch-pc-windows-msvc.zip"
+        $uvTmp = Join-Path $env:TEMP 'moegal_honyaku_uv.zip'
+        $uvTmpDir = Join-Path $env:TEMP 'moegal_honyaku_uv'
+
+        New-Item -ItemType Directory -Force -Path $uvHome | Out-Null
+        Remove-Item $uvTmp -Force -ErrorAction SilentlyContinue
+        Remove-Item $uvTmpDir -Recurse -Force -ErrorAction SilentlyContinue
+
+        Invoke-WebRequest -UseBasicParsing -Uri $uvZipUrl -OutFile $uvTmp
+        Expand-Archive -Path $uvTmp -DestinationPath $uvTmpDir -Force
+        $uvExtracted = Get-ChildItem -Path $uvTmpDir -Recurse -Filter 'uv.exe' | Select-Object -First 1
+        if (-not $uvExtracted) {
+            throw 'uv.exe was not found in the downloaded archive.'
+        }
+        Copy-Item $uvExtracted.FullName $uvBin -Force
+        Remove-Item $uvTmp -Force -ErrorAction SilentlyContinue
+        Remove-Item $uvTmpDir -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "uv downloaded to: $uvBin"
+    }
+
+    Invoke-Checked 'Installing Python 3.12' { & $uvBin python install 3.12 --no-bin }
+
+    if (-not (Test-Path -LiteralPath $venvPython)) {
+        Invoke-Checked 'Creating virtual environment' { & $uvBin venv --python 3.12 }
+    } else {
+        Write-Step 'Virtual environment already exists'
+        Write-Host $venvPython
+    }
+
+    Invoke-Checked 'Installing PyTorch' { & $uvBin pip install @($options.TorchPackages) --index-url $options.TorchIndexUrl }
+
+    $filteredRequirementsPath = New-FilteredRequirementsFile -SourcePath $requirementsPath
+    Invoke-Checked 'Installing dependencies' { & $uvBin pip install -r $filteredRequirementsPath --index-url $env:UV_DEFAULT_INDEX --index-strategy unsafe-best-match }
+
+    Write-Step 'Installing optional pydensecrf'
+    & $uvBin pip install 'pydensecrf@https://github.com/lucasb-eyer/pydensecrf/archive/refs/heads/master.zip'
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host 'WARNING: pydensecrf installation failed. CRF mask refinement will be unavailable.'
+        Write-Host 'TIP: Install Visual Studio Build Tools, then run: pip install pydensecrf'
+    } else {
+        Write-Host 'pydensecrf installed successfully.'
+    }
+
+    if (-not (Test-Path -LiteralPath $venvPython)) {
+        throw "Python executable not found after setup: $venvPython"
+    }
+    Assert-PythonModule -PythonPath $venvPython -ModuleName 'uvicorn'
+
+    if (-not $env:SERVER_PORT) { $env:SERVER_PORT = '8000' }
+    Write-Step "Starting server on port $env:SERVER_PORT"
+    & $venvPython -m uvicorn main:app --host 0.0.0.0 --port $env:SERVER_PORT
+    $serverExitCode = $LASTEXITCODE
+    if ($null -ne $serverExitCode -and $serverExitCode -ne 0) {
+        throw "Server exited with code $serverExitCode."
+    }
+}
+catch {
+    Write-Host ''
+    Write-Host 'ERROR: Startup failed.' -ForegroundColor Red
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Write-Host ''
+    Write-Host 'Common fixes:'
+    Write-Host '  1. Check network access to GitHub, PyPI, and download.pytorch.org.'
+    Write-Host '  2. Try CPU mode if the target computer has no NVIDIA GPU or incompatible drivers.'
+    Write-Host '  3. Make sure the project path is not inside a protected system directory.'
+    Write-Host '  4. Copy all project files, including requirements-*.txt, .env, app, models, and assets.'
+    exit 1
+}
+finally {
+    Write-Host ''
+    if ($env:MOEGAL_LAUNCHED_FROM_CMD -ne '1') {
+        Write-Host 'Press Enter to exit...'
+        [void][System.Console]::ReadLine()
+    }
 }
 
-Write-Host '正在安装 PyTorch...'
-& $UV_BIN pip install $TORCH_VERSION.Split() --extra-index-url $TORCH_INDEX_URL
-
-Write-Host '正在安装其他依赖...'
-& $UV_BIN pip install -r $REQUIREMENTS_FILE --index-strategy unsafe-best-match
-
-# 尝试安装 pydensecrf（可选依赖，编译需要 C++ 环境）
-Write-Host '尝试安装 pydensecrf (可选: CRF 掩码细化)...'
-$pydensecrfResult = & $UV_BIN pip install "pydensecrf@https://github.com/lucasb-eyer/pydensecrf/archive/refs/heads/master.zip" 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Host '警告: pydensecrf 安装失败，CRF 掩码细化功能将不可用'
-    Write-Host '提示: 安装 Visual Studio Build Tools 后可手动安装: pip install pydensecrf'
-} else {
-    Write-Host 'pydensecrf 安装成功'
-}
-
-Write-Host '启动服务...'
-if (-not $env:SERVER_PORT) { $env:SERVER_PORT = '8000' }
-& $VENV_PYTHON -m uvicorn main:app --host 0.0.0.0 --port $env:SERVER_PORT
